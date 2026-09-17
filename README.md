@@ -219,7 +219,8 @@ The code was developed on a Mac without an NVIDIA GPU:
   patches, training and evaluation for both modes, TorchScript export, the C++
   LibTorch pipeline with the CPU backend (its output matched Python inference
   exactly), the Python fallback pipeline, the benchmark scripts on CPU, and the plots.
-- **Compile-checked only:** the CUDA backend (`pathtrace_kernel.cu`).
-- **Not run yet:** the CUDA backend on a real GPU, and the Nsight script.
+- **Not compiled or run yet:** the CUDA backend (`renderer/src/pathtrace_kernel.cu`),
+  the CUDA code paths of the LibTorch pipeline, and the Nsight script.
 
-Phase 2 is the first real test of the CUDA backend. Please report any errors.
+Building on the NVIDIA machine (section 2) is the first compile of the CUDA code, and
+Phase 2 is its first run. Please send back any compiler errors or output.
