@@ -1,0 +1,36 @@
+# build
+build/
+build-*/
+cmake-build-*/
+*.o
+*.obj
+*.exe
+*.pdb
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# large generated data (regenerate with the scripts)
+dataset/raw/*
+!dataset/raw/.gitkeep
+dataset/patches/*
+!dataset/patches/.gitkeep
+dataset/scenes/*
+!dataset/scenes/.gitkeep
+denoiser/checkpoints/*
+!denoiser/checkpoints/.gitkeep
+benchmarks/results/**/*.exr
+benchmarks/results/**/*.npy
+benchmarks/results/nsight/
+outputs/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.nsys-rep
+*.qdrep
+*.sqlite
