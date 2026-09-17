@@ -1,0 +1,9 @@
+# Python 3.10+. Install PyTorch with CUDA from https://pytorch.org/get-started/locally/ first
+# (pick the CUDA version matching your driver), then: pip install -r requirements.txt
+torch>=2.1
+numpy>=1.24
+matplotlib>=3.7
+pillow>=9.0
+OpenEXR>=3.3        # optional: the scripts fall back to a built-in EXR reader
+# lpips             # optional perceptual metric (benchmarks/quality_metrics.py --lpips)
+# onnx              # optional, for export_model.py --onnx
