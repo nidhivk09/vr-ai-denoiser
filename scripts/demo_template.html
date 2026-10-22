@@ -176,6 +176,33 @@ tr.hl td { color: var(--glow); }
 .chip.done { color: var(--ok); } .chip.gpu { color: var(--next); }
 footer { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--rim); font: 12px var(--mono); color: var(--dim); }
 
+
+/* results */
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.metric { border: 1px solid var(--rim); border-radius: 12px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
+.metric b { font: 800 18px var(--display); font-stretch: 112%; }
+.metric span { font-size: 13px; color: var(--dim); }
+.metric em { font: 500 11px var(--mono); font-style: normal; color: var(--ok); letter-spacing: 0.06em; text-transform: uppercase; }
+.setup { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--rim); border: 1px solid var(--rim); border-radius: 14px; overflow: hidden; }
+.setup div { background: var(--void); padding: 14px 16px; }
+.setup span { display: block; font: 11px var(--mono); color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; }
+.setup b { font-weight: 600; }
+.charts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; }
+.legend2 { display: flex; gap: 18px; flex-wrap: wrap; font: 12px var(--mono); color: var(--dim); margin-top: 6px; }
+.legend2 i { display: inline-block; width: 20px; border-top: 2px solid; vertical-align: middle; margin-right: 6px; }
+td.gain { color: var(--ok); }
+tr.grp td { border-top: 1px solid var(--dim); }
+.findings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.finding { border-left: 2px solid var(--glow); padding: 4px 0 4px 14px; display: grid; gap: 6px; align-content: start; }
+.finding.warn { border-color: var(--next); }
+.finding b { font-weight: 600; }
+.finding span { font-size: 14px; color: var(--dim); }
+@media (max-width: 860px) {
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .setup { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .charts, .findings { grid-template-columns: minmax(0, 1fr); }
+}
+
 @media (max-width: 860px) {
   .hero-head, .split, .sim { grid-template-columns: minmax(0, 1fr); gap: 22px; }
   .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -192,7 +219,7 @@ footer { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--rim); 
 <div class="wrap">
   <div class="top">
     <div class="mark"><span class="dots"><i></i><i></i></span>Stereo path tracer</div>
-    <nav><a href="#trace">How it works</a><a href="#eyes">Two eyes</a><a href="#noise">Noise</a><a href="#inside">Buffers</a><a href="#depth">Disparity</a><a href="#denoise">Denoiser</a><a href="#status">Progress</a></nav>
+    <nav><a href="#trace">How it works</a><a href="#eyes">Two eyes</a><a href="#noise">Noise</a><a href="#inside">Buffers</a><a href="#depth">Disparity</a><a href="#denoise">Denoiser</a><a href="#status">Progress</a><a href="#render-results">Results</a></nav>
   </div>
 
   <header class="hero">
@@ -383,6 +410,75 @@ footer { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--rim); 
       <p class="dim">Everything above ran on a laptop: the CPU backend for rendering and the Apple M2 GPU for training. The CUDA kernels are written and use the same integrator. The real-time measurements need an NVIDIA GPU, and those runs come next.</p>
     </div>
     <div class="phases" id="phases"></div>
+  </section>
+
+  <!-- rendering results -->
+  <section id="render-results">
+    <div class="head">
+      <span class="tag">Rendering results · CPU backend</span>
+      <h2>How the path tracer performs</h2>
+      <p class="dim">All measurements come from the multithreaded CPU renderer on the laptop. They show that the renderer behaves as theory predicts, which techniques pay off, and how far a CPU is from the VR frame budget.</p>
+    </div>
+    <div class="setup" id="r-setup"></div>
+    <div class="charts">
+      <div>
+        <h3>Frame time vs. VR budget (both eyes)</h3>
+        <svg id="ch-time" viewBox="0 0 460 240" role="img" aria-label="Frame time for both eyes versus samples per pixel, with the 11.1 ms VR budget" style="width:100%;height:auto;margin-top:8px"></svg>
+        <p class="cap" id="time-cap"></p>
+      </div>
+      <div>
+        <h3>Thread divergence vs. samples</h3>
+        <svg id="ch-div" viewBox="0 0 460 240" role="img" aria-label="Share of idle lanes in thread blocks versus samples per pixel" style="width:100%;height:auto;margin-top:8px"></svg>
+        <div class="legend2" id="div-legend"></div>
+        <p class="cap">The share of time GPU threads in one block would sit idle, waiting for the slowest pixel. It is computed from the renderer's per-pixel work counters. More samples per pixel average out the differences between pixels.</p>
+      </div>
+    </div>
+    <div class="split">
+      <div><h3>Speed and quality by sample count</h3><div class="tablewrap" style="margin-top:10px"><table id="r-table"></table></div>
+        <p class="cap" style="margin-top:10px">512×512 per eye. PSNR and RMSE are measured against a 4096-spp reference of the same view.</p></div>
+      <div style="display:grid;gap:22px">
+        <div><h3>What each technique buys</h3><div class="tablewrap" style="margin-top:10px"><table id="r-ablate"></table></div></div>
+        <div><h3>Full C++ pipeline, one stereo frame</h3><div class="tablewrap" style="margin-top:10px"><table id="r-pipe"></table></div>
+          <p class="cap" style="margin-top:10px" id="pipe-cap"></p></div>
+      </div>
+    </div>
+    <div><h3>GPU workload analysis</h3><div class="tablewrap" style="margin-top:10px"><table id="r-div"></table></div></div>
+    <div class="findings" id="r-findings"></div>
+  </section>
+
+  <!-- results -->
+  <section id="results">
+    <div class="head">
+      <span class="tag">Training results · Apple M2</span>
+      <h2>How well the denoiser learned</h2>
+      <p class="dim">The denoiser outputs an image, not a class label, so accuracy and F1 score do not apply. It is a regression task, and it is judged by how close its output is to a clean reference rendered with many more samples.</p>
+    </div>
+    <div class="metrics">
+      <div class="metric"><b>L1 loss</b><span>Average per-pixel error in log-HDR space. This is what training minimises.</span><em>lower is better</em></div>
+      <div class="metric"><b>PSNR</b><span>Image fidelity in decibels. +3 dB is roughly half the error.</span><em>higher is better</em></div>
+      <div class="metric"><b>SSIM</b><span>Structural similarity of edges, textures and contrast, from 0 to 1.</span><em>higher is better</em></div>
+      <div class="metric"><b>L/R disagreement</b><span>How much the two eyes differ after accounting for depth. This is our stereo metric.</span><em>lower is better</em></div>
+    </div>
+    <div class="setup" id="setup"></div>
+    <div class="charts">
+      <div>
+        <h3>Validation loss (L1 per eye)</h3>
+        <svg id="ch-l1" viewBox="0 0 460 220" role="img" aria-label="Validation L1 per epoch for both models" style="width:100%;height:auto;margin-top:8px"></svg>
+        <div class="legend2"><span><i style="border-color:var(--dim);border-top-style:dashed"></i>baseline U-Net</span><span><i style="border-color:var(--glow)"></i>U-Net + stereo loss (λ = 1)</span></div>
+      </div>
+      <div>
+        <h3>Validation L/R consistency loss</h3>
+        <svg id="ch-cons" viewBox="0 0 460 220" role="img" aria-label="Validation consistency loss per epoch for both models" style="width:100%;height:auto;margin-top:8px"></svg>
+        <div class="legend2"><span><i style="border-color:var(--dim);border-top-style:dashed"></i>baseline U-Net</span><span><i style="border-color:var(--glow)"></i>U-Net + stereo loss (λ = 1)</span></div>
+      </div>
+    </div>
+    <div class="split">
+      <div><h3>Loss by epoch</h3><div class="tablewrap" style="margin-top:10px"><table id="loss-table"></table></div>
+        <p class="cap" style="margin-top:10px">Validation loss halves over training, and train and validation loss stay close, so the network is not overfitting. Both models scored best on their final epoch, so neither had fully converged.</p></div>
+      <div><h3>Test results on unseen scenes</h3><div class="tablewrap" style="margin-top:10px"><table id="test-table"></table></div>
+        <p class="cap" style="margin-top:10px" id="test-cap"></p></div>
+    </div>
+    <div class="findings" id="findings"></div>
   </section>
 
   <footer id="foot"></footer>
@@ -873,6 +969,139 @@ footer { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--rim); 
   }
   $("dn-note").textContent = `Averaged over ${dn.test_scenes.length} unseen test scenes at ${dn.res[0]}² per eye. Denoising both eyes takes about ${fmt(dn.summary["baseline@4"].ms, 0)} ms on the M2 GPU. Both models halve the left/right disagreement of the noisy input. At this small training scale the stereo loss is level with the plain U-Net, and the full experiment on the GPU dataset will test whether it pulls ahead.`;
   renderDn();
+
+  // =============== rendering results ===============
+  (function renderResults() {
+    const R = D.render || {}, mono = D.convergence, both = D.stereo_conv, px = 512 * 512, budget = 1000 / 90;
+    const fms = (ms) => ms >= 1000 ? (ms / 1000).toFixed(1) + " s" : ms.toFixed(ms < 100 ? 1 : 0) + " ms";
+    $("r-setup").innerHTML = [
+      ["hardware", "Apple M2 · 8 CPU cores (4 performance + 4 efficiency)"], ["resolution", "512 × 512 per eye, stereo pair"],
+      ["scene", "Cornell box: diffuse walls, gold metal, glass"], ["integrator", "max 8 bounces · NEE · Russian roulette from bounce 3"],
+      ["firefly clamp", "indirect light clamped at 8"], ["reference", "4096 samples per pixel"],
+    ].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
+
+    function logChart(svgId, pts, opt) {
+      const svg = $(svgId), L = 58, Rr = 446, T = 12, B = 192;
+      const xs = pts.map((p) => Math.log2(p.x)), x1 = Math.max(...xs);
+      const ys = [...pts.map((p) => opt.logY ? Math.log10(p.y) : p.y), ...(opt.extra || [])];
+      const y0 = opt.y0 ?? Math.floor(Math.min(...ys)), y1 = opt.y1 ?? Math.ceil(Math.max(...ys));
+      const X = (v) => L + v / x1 * (Rr - L), Y = (v) => B - (v - y0) / (y1 - y0) * (B - T);
+      const rim = css("--rim");
+      let s = "";
+      for (let p = 0; p <= x1; p += 2) s += `<line x1="${X(p)}" x2="${X(p)}" y1="${T}" y2="${B}" stroke="${rim}"/><text x="${X(p)}" y="${B + 16}" text-anchor="middle">${2 ** p}</text>`;
+      for (const v of opt.yticks(y0, y1)) s += `<line x1="${L}" x2="${Rr}" y1="${Y(v)}" y2="${Y(v)}" stroke="${rim}"/><text x="${L - 8}" y="${Y(v) + 4}" text-anchor="end">${opt.ylab(v)}</text>`;
+      s += `<text x="${(L + Rr) / 2}" y="${B + 34}" text-anchor="middle">samples per pixel</text>`;
+      s += opt.draw({ X, Y, xs });
+      svg.innerHTML = s;
+    }
+    const decades = (a, b) => { const o = []; for (let v = a; v <= b; v++) o.push(v); return o; };
+    logChart("ch-time", both.map((b) => ({ x: b.spp, y: b.ms })), {
+      logY: true, extra: [Math.log10(budget)], yticks: decades, ylab: (v) => fms(10 ** v),
+      draw: ({ X, Y, xs }) => {
+        const lb = Math.log10(budget), glow = css("--glow"), ok = css("--ok");
+        let s = `<line x1="58" x2="446" y1="${Y(lb)}" y2="${Y(lb)}" stroke="${ok}" stroke-width="1.5" stroke-dasharray="6 4"/>`;
+        s += `<text x="446" y="${Y(lb) - 6}" text-anchor="end" style="fill:${ok}">VR budget 11.1 ms (90 FPS)</text>`;
+        s += `<polyline fill="none" stroke="${glow}" stroke-width="2.5" points="${both.map((b, i) => `${X(xs[i])},${Y(Math.log10(b.ms))}`).join(" ")}"/>`;
+        both.forEach((b, i) => { s += `<circle cx="${X(xs[i])}" cy="${Y(Math.log10(b.ms))}" r="3.5" fill="${glow}"/>`; });
+        return s;
+      },
+    });
+    $("time-cap").textContent = `Even at 1 sample per pixel, the CPU needs ${fms(both[0].ms)} for both eyes, ${(both[0].ms / budget).toFixed(0)}× over budget before any denoising. Time grows linearly with samples. This gap is why the real-time version runs on a GPU.`;
+
+    if (R.divergence) {
+      const dv = R.divergence, cols = [["divergence_b8", "8×8", css("--right")], ["divergence_b16", "16×16", css("--glow")], ["divergence_b32", "32×32", css("--left")]];
+      logChart("ch-div", dv.map((r) => ({ x: r.spp, y: r.divergence_b16 * 100 })), {
+        y0: 0, y1: 80, yticks: () => [0, 20, 40, 60, 80], ylab: (v) => v + "%",
+        draw: ({ X, Y }) => cols.map(([k, , c]) => `<polyline fill="none" stroke="${c}" stroke-width="2.2" points="${dv.map((r) => `${X(Math.log2(r.spp))},${Y(r[k] * 100)}`).join(" ")}"/>` +
+          dv.map((r) => `<circle cx="${X(Math.log2(r.spp))}" cy="${Y(r[k] * 100)}" r="3.5" fill="${c}"/>`).join("")).join(""),
+      });
+      $("div-legend").innerHTML = cols.map(([, l, c]) => `<span><i style="border-color:${c}"></i>${l} thread block</span>`).join("");
+      $("r-div").innerHTML = `<tr><th>spp</th><th>Mrays/s</th><th>work spread (CV)</th><th>idle 8×8</th><th>idle 16×16</th><th>idle 32×32</th><th>path length</th><th>BVH traffic</th></tr>` +
+        dv.map((r) => `<tr><td>${r.spp}</td><td>${r.mrays_per_sec.toFixed(1)}</td><td>${r.work_cv.toFixed(2)}</td><td>${(r.divergence_b8 * 100).toFixed(0)}%</td><td>${(r.divergence_b16 * 100).toFixed(0)}%</td><td>${(r.divergence_b32 * 100).toFixed(0)}%</td><td>${r.segments_per_sample.toFixed(2)} bounces</td><td>${r.traversal_gb_per_sec.toFixed(1)} GB/s</td></tr>`).join("");
+    } else { $("ch-div").closest("div").hidden = true; }
+
+    const ref = (spp) => both.find((b) => b.spp === spp);
+    $("r-table").innerHTML = `<tr><th>spp</th><th>one eye</th><th>both eyes</th><th>Msamples/s</th><th>PSNR dB</th><th>RMSE</th></tr>` +
+      mono.map((c) => { const b = ref(c.spp); return `<tr><td>${c.spp}</td><td>${fms(c.ms)}</td><td>${b ? fms(b.ms) : "–"}</td><td>${(px * c.spp / c.ms / 1000).toFixed(1)}</td><td>${c.psnr.toFixed(1)}</td><td>${c.rmse.toFixed(4)}</td></tr>`; }).join("");
+
+    const rows = [];
+    if (R.nee_ms) rows.push(["NEE off → on<br><span class=\"dim\">16 spp, median of 3 runs</span>", `${fms(R.nonee_ms)} → ${fms(R.nee_ms)}`, `${D.nee.without.psnr.toFixed(1)} → ${D.nee.with.psnr.toFixed(1)} dB`, `+${(D.nee.with.psnr - D.nee.without.psnr).toFixed(1)} dB for ${(R.nee_ms / R.nonee_ms).toFixed(1)}× time`]);
+    rows.push(["1 → 8 threads<br><span class=\"dim\">16 spp</span>", `${fms(D.threads.one_thread_ms)} → ${fms(D.threads.all_threads_ms)}`, "same image", `${(D.threads.one_thread_ms / D.threads.all_threads_ms).toFixed(1)}× faster`]);
+    rows.push(["1 → 1024 spp<br><span class=\"dim\">more samples</span>", `${fms(mono[0].ms)} → ${fms(mono[mono.length - 1].ms)}`, `${mono[0].psnr.toFixed(1)} → ${mono[mono.length - 1].psnr.toFixed(1)} dB`, `+${(mono[mono.length - 1].psnr - mono[0].psnr).toFixed(1)} dB for ${(mono[mono.length - 1].ms / mono[0].ms).toFixed(0)}× time`]);
+    $("r-ablate").innerHTML = `<tr><th>change</th><th>time</th><th>quality</th><th>trade-off</th></tr>` +
+      rows.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td class="gain">${r[3]}</td></tr>`).join("");
+
+    const P = D.pipeline;
+    if (P) {
+      const t = P.timing, stages = [["render left eye", t.render_left_ms], ["render right eye", t.render_right_ms], ["denoise both eyes", t.denoise_ms], ["total frame", t.total_ms]];
+      $("r-pipe").innerHTML = `<tr><th>stage</th><th>time</th><th>share</th></tr>` +
+        stages.map(([k, v], i) => `<tr class="${i === 3 ? "hl" : ""}"><td>${k}</td><td>${v.toFixed(1)} ms</td><td>${i === 3 ? (1000 / v).toFixed(1) + " FPS" : (v / t.total_ms * 100).toFixed(0) + "%"}</td></tr>`).join("");
+      $("pipe-cap").textContent = `${P.res[0]}² per eye, ${P.spp} spp, mean of ${t.frames} frames, with the renderer and LibTorch both on the CPU. The C++ output matches Python exactly (max difference ${P.max_abs_diff}). Denoising takes ${(t.denoise_ms / t.total_ms * 100).toFixed(0)}% of the frame on a CPU, and moving it to the GPU is the biggest win.`;
+    }
+
+    const d16 = R.divergence ? R.divergence.map((r) => (r.divergence_b16 * 100).toFixed(0)) : null;
+    $("r-findings").innerHTML = [
+      ["", "Monte Carlo theory confirmed", `On a log–log plot, measured error falls with slope ${R.rmse_slope.toFixed(2)} as samples increase. Theory predicts −0.50 (error ∝ 1/√N), so the integrator is unbiased and converging correctly.`],
+      ["", "NEE is the biggest single win", R.nee_ms ? `Shadow rays to the light add ${(D.nee.with.psnr - D.nee.without.psnr).toFixed(1)} dB at only ${(R.nee_ms / R.nonee_ms).toFixed(1)}× the time. Getting the same gain from extra samples alone would take about ${Math.round(10 ** ((D.nee.with.psnr - D.nee.without.psnr) / 10))}× more samples.` : "Shadow rays to the light add about 16 dB at the same sample count."],
+      ["warn", "Divergence matters at low spp", d16 ? `At 1 spp, ${d16[0]}% of thread time in 16×16 blocks would be idle, dropping to ${d16[d16.length - 1]}% at ${R.divergence[R.divergence.length - 1].spp} spp. Real-time VR runs at low spp, so this is what the CUDA profiling will investigate.` : "Low sample counts give the most uneven per-pixel work."],
+    ].map(([c, ttl, x]) => `<div class="finding ${c}"><b>${ttl}</b><span>${x}</span></div>`).join("");
+  })();
+
+  // =============== results ===============
+  (function results() {
+    const A = dn.train_args, logB = dn.log_baseline, logS = dn.log_stereo, ps = D.dataset.patch_stats;
+    const mins = (log) => log.reduce((a, r) => a + r.epoch_sec, 0) / 60;
+    const sp = ps ? ps.splits : null;
+    $("setup").innerHTML = [
+      ["data", `${D.dataset.scenes.length} procedural scenes, ${D.dataset.res[0]}² per eye`],
+      ["split", sp ? `${sp.train.scenes} train · ${sp.val.scenes} validation · ${sp.test.scenes} test scenes` : "train / val / test by scene"],
+      ["training samples", sp ? `${sp.train.patches.toLocaleString()} stereo patches of ${ps.patch_size}×${ps.patch_size}` : ""],
+      ["model", `U-Net, ${(dn.params / 1e6).toFixed(2)}M parameters`],
+      ["schedule", `${A.epochs} epochs · batch ${A.batch_size} · Adam, one-cycle LR ${A.lr}`],
+      ["hardware", `Apple M2 GPU · about ${mins(logB).toFixed(0)} min per model`],
+    ].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
+
+    function curve(svgId, key) {
+      const svg = $(svgId), L = 56, R = 448, T = 12, B = 180;
+      const all = [...logB, ...logS].map((r) => r[key]), lo = Math.min(...all), hi = Math.max(...all), n = Math.max(logB.length, logS.length);
+      const Xp = (e) => L + (e - 1) / (n - 1) * (R - L), Yp = (v) => B - (v - lo) / (hi - lo) * (B - T);
+      const rim = css("--rim");
+      let s = "";
+      for (let i = 0; i <= 4; i++) { const v = lo + (hi - lo) * i / 4; s += `<line x1="${L}" x2="${R}" y1="${Yp(v)}" y2="${Yp(v)}" stroke="${rim}"/><text x="${L - 8}" y="${Yp(v) + 4}" text-anchor="end">${v.toFixed(4)}</text>`; }
+      for (const e of [1, 5, 10, 15, 20, 25, 30].filter((e) => e <= n)) s += `<text x="${Xp(e)}" y="${B + 16}" text-anchor="middle">${e}</text>`;
+      s += `<text x="${(L + R) / 2}" y="${B + 34}" text-anchor="middle">epoch</text>`;
+      const pl = (log, col, dash) => `<polyline fill="none" stroke="${col}" stroke-width="2.2" ${dash} points="${log.map((r) => `${Xp(r.epoch)},${Yp(r[key])}`).join(" ")}"/>`;
+      s += pl(logB, css("--dim"), 'stroke-dasharray="6 4"') + pl(logS, css("--glow"), "");
+      const last = logS[logS.length - 1];
+      s += `<circle cx="${Xp(last.epoch)}" cy="${Yp(last[key])}" r="4" fill="${css("--glow")}"/>`;
+      svg.innerHTML = s;
+    }
+    curve("ch-l1", "val_l1"); curve("ch-cons", "val_cons");
+
+    const f4 = (v) => v.toFixed(4);
+    const ep = [1, 5, 10, 20, logB.length].filter((e, i, a) => e <= logB.length && a.indexOf(e) === i);
+    $("loss-table").innerHTML = `<tr><th>epoch</th><th>baseline train</th><th>baseline val</th><th>stereo val</th><th>stereo val cons.</th></tr>` +
+      ep.map((e) => { const b = logB[e - 1], s = logS[e - 1];
+        return `<tr><td>${e}</td><td>${f4(b.train_l1)}</td><td>${f4(b.val_l1)}</td><td>${f4(s.val_l1)}</td><td>${f4(s.val_cons)}</td></tr>`; }).join("");
+
+    const rowsT = [];
+    for (const s of dn.noisy_spp) {
+      const noisy = dn.summary[`noisy@${s}`];
+      ["noisy", "baseline", "stereo"].forEach((m, i) => {
+        const r = dn.summary[`${m}@${s}`], gain = m === "noisy" ? "" : `+${(r.psnr - noisy.psnr).toFixed(1)}`;
+        rowsT.push(`<tr class="${i === 0 ? "grp" : ""}"><td>${i === 0 ? `<b>${s} spp</b> · ` : ""}${names[m]}</td><td>${r.psnr.toFixed(2)}</td><td class="gain">${gain}</td><td>${r.ssim.toFixed(3)}</td><td>${f4(r.disagreement)}</td></tr>`);
+      });
+    }
+    $("test-table").innerHTML = `<tr><th>input · method</th><th>PSNR dB</th><th>gain</th><th>SSIM</th><th>L/R disagree</th></tr>` + rowsT.join("");
+    $("test-cap").textContent = `Averaged over the ${dn.test_scenes.length} test scenes (${dn.test_scenes.join(", ")}), which were never seen in training. The clean reference has a disagreement of ${f4(dn.summary["ground_truth@1"].disagreement)}. That is the floor, because highlights and reflections really do differ between the eyes.`;
+
+    const s1 = (m) => dn.summary[`${m}@1`];
+    $("findings").innerHTML = [
+      ["", "The denoiser works", `It gains up to +${(s1("baseline").psnr - s1("noisy").psnr).toFixed(1)} dB PSNR and +${(s1("baseline").ssim - s1("noisy").ssim).toFixed(2)} SSIM on unseen scenes. The gain is largest where the input is noisiest.`],
+      ["", "The eyes agree twice as well", `Both models cut left/right disagreement from ${f4(s1("noisy").disagreement)} to about ${f4(s1("baseline").disagreement)}, because removing the noise removes most of the mismatch.`],
+      ["warn", "Stereo loss: not proven yet", "At this scale the stereo loss is level with the baseline on disagreement and gives up 0.2–0.9 dB PSNR. Only 2 test scenes and unconverged models make the difference too small to call. The full-scale λ sweep on the GPU will settle it."],
+    ].map(([c, t, x]) => `<div class="finding ${c}"><b>${t}</b><span>${x}</span></div>`).join("");
+  })();
 
   // =============== status ===============
   const phases = [

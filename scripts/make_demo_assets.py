@@ -26,7 +26,7 @@ from benchmarks.divergence_analysis import block_divergence, colormap  # noqa: E
 from benchmarks.quality_metrics import display, stereo_metrics  # noqa: E402
 from common.exr import read_exr, read_exr_channels  # noqa: E402
 from common.imageops import to_uint8, tonemap  # noqa: E402
-from common.paths import CHECKPOINT_DIR, RAW_DIR  # noqa: E402
+from common.paths import CHECKPOINT_DIR, RAW_DIR, RESULTS_DIR  # noqa: E402
 from dataset import layout  # noqa: E402
 from denoiser.dataset import load_scene_pair, scenes_in_split  # noqa: E402
 from denoiser.losses import visibility_masks, warp_right_to_left  # noqa: E402
@@ -100,6 +100,22 @@ def path_tracer_section(data: dict) -> None:
     }
 
 
+def rendering_section(data: dict) -> None:
+    """Renderer measurements: NEE ablation timing, 1/sqrt(N) fit, workload divergence."""
+    r = {}
+    if (DEMO / "nee_times.csv").exists() and (DEMO / "nonee_times.csv").exists():
+        r["nee_ms"] = float(np.median(render_ms(DEMO / "nee_times.csv")))
+        r["nonee_ms"] = float(np.median(render_ms(DEMO / "nonee_times.csv")))
+    conv = data["convergence"]
+    slope, _ = np.polyfit(np.log([c["spp"] for c in conv]), np.log([c["rmse"] for c in conv]), 1)
+    r["rmse_slope"] = float(slope)
+    div = RESULTS_DIR / "divergence.csv"
+    if div.exists():
+        with open(div) as f:
+            r["divergence"] = [{k: float(v) for k, v in row.items() if k != "scene" and v != ""} for row in csv.DictReader(f)]
+    data["render"] = r
+
+
 def stereo_views_section(data: dict) -> None:
     """Stereo convergence series (both eyes) and the stereo camera orbit."""
     sc = DEMO / "sconv"
@@ -139,8 +155,9 @@ def stereo_section(data: dict) -> None:
 def denoiser_section(data: dict) -> None:
     device = pick_device("auto")
     manifest = layout.load_manifest(RAW_DIR)
-    models = {name: load_checkpoint(CHECKPOINT_DIR / f"demo_{name}/best.pt", device)[0]
+    loaded = {name: load_checkpoint(CHECKPOINT_DIR / f"demo_{name}/best.pt", device)
               for name in ("baseline", "stereo")}
+    models = {name: m for name, (m, _) in loaded.items()}
     h, w = manifest["height"], manifest["width"]
     warm = torch.zeros(2, 9, h, w, device=device)
     for m in models.values():
@@ -184,6 +201,9 @@ def denoiser_section(data: dict) -> None:
         "summary": {k: {m: float(np.mean([r[m] for r in v])) for m in ("psnr", "ssim", "disagreement", "ms")}
                     for k, v in summary.items()},
     }
+    data["denoiser"]["params"] = sum(p.numel() for p in models["baseline"].parameters())
+    data["denoiser"]["best_epoch"] = {name: int(ck["epoch"]) for name, (_, ck) in loaded.items()}
+    data["denoiser"]["train_args"] = json.loads((CHECKPOINT_DIR / "demo_stereo/args.json").read_text())
     for name in ("baseline", "stereo"):
         with open(CHECKPOINT_DIR / f"demo_{name}/log.csv") as f:
             data["denoiser"][f"log_{name}"] = [{k: float(v) for k, v in r.items()} for r in csv.DictReader(f)]
@@ -229,7 +249,7 @@ def write_pages(data: dict) -> None:
 
 def main() -> None:
     data: dict = {"generated": time.strftime("%d %b %Y")}
-    for section in (path_tracer_section, stereo_views_section, stereo_section, dataset_section, denoiser_section, pipeline_section):
+    for section in (path_tracer_section, rendering_section, stereo_views_section, stereo_section, dataset_section, denoiser_section, pipeline_section):
         section(data)
         print(f"done: {section.__name__}", flush=True)
     (SITE / "data.json").write_text(json.dumps(data, indent=1))
