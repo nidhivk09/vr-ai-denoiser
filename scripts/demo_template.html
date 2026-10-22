@@ -1,0 +1,893 @@
+<title>Stereo Path Tracer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..900&family=Figtree:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: a headset visor. The page is built around two eyes: red marks the left eye and cyan the right,
+   exactly as on anaglyph glasses. Everything else stays graphite so the renders carry the colour.
+   Single dark look by choice: the renders are lit scenes on black. */
+:root {
+  --void: #07080b;        /* page ground, the inside of a headset */
+  --shell: #101218;       /* panels */
+  --rim: #22262f;         /* hairlines */
+  --text: #eeede9;        /* body text */
+  --dim: #8a8f9b;         /* secondary text */
+  --left: #ff4f5e;        /* left eye */
+  --right: #2fdde6;       /* right eye */
+  --glow: #fff1cf;        /* light / emphasis */
+  --ok: #7ad79a;
+  --next: #b9a6ff;
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "Figtree", "Segoe UI", system-ui, sans-serif;
+  --mono: "DM Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { background: var(--void); }
+body {
+  background: var(--void); color: var(--text); font: 16px/1.6 var(--body); margin: 0;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 72px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; }
+h1, h2, h3 { font-family: var(--display); font-stretch: 125%; text-wrap: balance; margin: 0; line-height: 1.02; }
+h1 { font-weight: 900; font-size: clamp(34px, 5.6vw, 72px); letter-spacing: -0.03em; text-transform: uppercase; }
+h2 { font-weight: 800; font-size: clamp(24px, 3.4vw, 40px); letter-spacing: -0.02em; text-transform: uppercase; }
+h3 { font-weight: 700; font-size: 17px; font-stretch: 110%; letter-spacing: 0; }
+p { margin: 0; max-width: 64ch; }
+.dim { color: var(--dim); }
+.l { color: var(--left); } .r { color: var(--right); }
+code, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+code { font-size: 0.88em; color: var(--glow); }
+.tag { font: 500 11.5px var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+img { display: block; max-width: 100%; height: auto; }
+button { font: 500 12.5px var(--mono); color: var(--text); background: transparent; border: 1px solid var(--rim);
+  border-radius: 6px; padding: 7px 12px; cursor: pointer; letter-spacing: 0.02em; }
+button:hover { border-color: var(--dim); }
+button[aria-pressed="true"] { background: var(--text); color: var(--void); border-color: var(--text); }
+button:focus-visible, input:focus-visible, .viewer:focus-visible { outline: 2px solid var(--glow); outline-offset: 3px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+input[type=range] { width: 100%; accent-color: var(--glow); }
+.cmd { font: 12.5px/1.5 var(--mono); color: var(--dim); border-left: 2px solid var(--rim); padding: 2px 0 2px 12px; overflow-x: auto; white-space: pre; }
+.cmd::before { content: "$ "; color: var(--glow); }
+svg text { font-family: var(--mono); font-size: 11px; fill: var(--dim); }
+
+/* ---------- top ---------- */
+.top { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-block: 22px; border-bottom: 1px solid var(--rim); }
+.mark { display: flex; align-items: center; gap: 10px; font: 500 12px var(--mono); letter-spacing: 0.14em; text-transform: uppercase; }
+.dots { display: inline-flex; gap: 4px; } .dots i { width: 10px; height: 10px; border-radius: 50%; display: block; }
+.dots i:first-child { background: var(--left); } .dots i:last-child { background: var(--right); }
+nav { display: flex; gap: 18px; flex-wrap: wrap; } nav a { font: 12px var(--mono); color: var(--dim); text-decoration: none; }
+nav a:hover { color: var(--text); }
+
+/* ---------- hero: headset viewer ---------- */
+.hero { padding-block: 44px 24px; display: grid; gap: 28px; }
+.hero-head { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 40px; align-items: end; }
+.hero-head p { color: var(--dim); font-size: 17px; }
+.visor { background: radial-gradient(120% 140% at 50% 0%, #161922 0%, var(--void) 70%); border: 1px solid var(--rim); border-radius: 28px; padding: clamp(10px, 2.2vw, 26px); }
+.viewer { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(6px, 1.6vw, 22px);
+  cursor: grab; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+.viewer.dragging { cursor: grabbing; }
+.viewer.single { grid-template-columns: minmax(0, 1fr); max-width: min(100%, 560px); margin: 0 auto; }
+.lens { position: relative; aspect-ratio: 1; max-width: 100%; border-radius: 34% 34% 30% 30% / 30% 30% 34% 34%; overflow: hidden; background: #000; }
+.lens img { width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.lens::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(closest-side, transparent 78%, rgba(7, 8, 11, 0.55) 92%, rgba(7, 8, 11, 0.95) 100%); }
+.lens .eye { position: absolute; top: 12%; left: 50%; transform: translateX(-50%); z-index: 2; font: 500 11px var(--mono); letter-spacing: 0.16em; text-transform: uppercase;
+  padding: 3px 9px; border-radius: 999px; background: rgba(7, 8, 11, 0.7); }
+.lens.L { box-shadow: 0 0 0 1.5px var(--left), 0 0 40px -8px rgba(255, 79, 94, 0.45); }
+.lens.R { box-shadow: 0 0 0 1.5px var(--right), 0 0 40px -8px rgba(47, 221, 230, 0.45); }
+.lens.A { box-shadow: 0 0 0 1.5px var(--rim); border-radius: 18px; }
+.hud { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 18px; align-items: center; margin-top: 18px; }
+.spp b { display: block; font: 900 30px var(--display); font-stretch: 125%; line-height: 1; color: var(--glow); font-variant-numeric: tabular-nums; }
+.spp span, .yaw span { font: 11px var(--mono); color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; }
+.yaw { min-width: 0; }
+.yaw .lbl { display: flex; justify-content: space-between; }
+.controls { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; margin-top: 16px; }
+.hint { font: 12px var(--mono); color: var(--dim); }
+
+.facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--rim); border: 1px solid var(--rim); border-radius: 14px; overflow: hidden; }
+.facts div { background: var(--void); padding: 18px 18px 16px; }
+.facts b { display: block; font: 800 26px var(--display); font-stretch: 115%; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+.facts span { font-size: 13px; color: var(--dim); }
+
+/* ---------- sections ---------- */
+section { padding-block: 96px 0; display: grid; gap: 26px; scroll-margin-top: 16px; }
+.head { display: grid; gap: 12px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 36px; align-items: start; }
+.cap { font-size: 13px; color: var(--dim); }
+.cap b { color: var(--text); font-weight: 600; }
+.panel { background: var(--shell); border: 1px solid var(--rim); border-radius: 14px; padding: 18px; }
+
+/* explainer: one pixel, step by step */
+.explain { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.explain canvas, .eyes2 canvas { width: 100%; height: auto; display: block; background: var(--shell); border: 1px solid var(--rim); border-radius: 14px; }
+.stepcard { display: grid; gap: 14px; }
+.stepnum { font: 500 11.5px var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); }
+.stepcard h3 { font-size: 22px; font-stretch: 115%; }
+.stepcard p { color: var(--dim); }
+.math { font: 13px/1.5 var(--mono); color: var(--glow); background: var(--shell); border: 1px solid var(--rim); border-radius: 8px; padding: 9px 12px; overflow-x: auto; white-space: pre; }
+.pips { display: flex; gap: 6px; }
+.pips button { width: 28px; height: 6px; padding: 0; border-radius: 3px; border: 0; background: var(--rim); }
+.pips button[aria-current="true"] { background: var(--glow); }
+.pips button.seen { background: #5b606c; }
+.swatches { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.sw { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 10px; align-items: center; border: 1px solid var(--rim); border-radius: 10px; padding: 8px; }
+.sw i { width: 40px; height: 40px; border-radius: 6px; display: block; border: 1px solid var(--rim); }
+.sw b { display: block; font-size: 13px; font-weight: 600; }
+.sw span { font: 11px var(--mono); color: var(--dim); }
+.more { display: none; gap: 8px; }
+.more.on { display: flex; flex-wrap: wrap; }
+
+/* stereo explainer */
+.eyes2 { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.eyes2 canvas { touch-action: none; cursor: grab; }
+.bigread { display: flex; gap: 26px; flex-wrap: wrap; }
+.bigread div span { display: block; font: 11px var(--mono); color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; }
+.bigread div b { font: 800 30px var(--display); font-stretch: 115%; font-variant-numeric: tabular-nums; }
+@media (max-width: 860px) { .explain, .eyes2 { grid-template-columns: minmax(0, 1fr); } }
+
+/* convergence */
+.pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.pair figure { margin: 0; } .pair figcaption { font: 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; margin-top: 6px; }
+.pair img.Li { border-top: 2px solid var(--left); } .pair img.Ri { border-top: 2px solid var(--right); }
+.ticks { display: flex; justify-content: space-between; font: 11px var(--mono); color: var(--dim); }
+.readout { display: flex; gap: 28px; flex-wrap: wrap; }
+.readout div span { display: block; font: 11px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.readout div b { font: 800 26px var(--display); font-stretch: 115%; font-variant-numeric: tabular-nums; }
+
+/* buffers + compare */
+.quad { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.quad figure { margin: 0; } .quad img { border-radius: 8px; }
+.quad figcaption { font: 12px var(--mono); color: var(--dim); margin-top: 8px; } .quad figcaption b { color: var(--text); font-weight: 500; }
+.cmp { position: relative; overflow: hidden; border-radius: 12px; background: #000; user-select: none; -webkit-user-select: none; }
+.cmp img { width: 100%; pointer-events: none; }
+.cmp .top { position: absolute; inset: 0; clip-path: inset(0 0 0 var(--cut, 50%)); }
+.cmp .bar { position: absolute; top: 0; bottom: 0; left: var(--cut, 50%); width: 2px; background: var(--glow); transform: translateX(-1px); pointer-events: none; }
+.cmp .bar::after { content: "◀ ▶"; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 6px 9px; border-radius: 999px;
+  background: var(--glow); color: var(--void); font: 500 10px var(--mono); white-space: nowrap; }
+.cmp .lab { position: absolute; top: 10px; font: 500 11px var(--mono); letter-spacing: 0.1em; text-transform: uppercase; background: rgba(7, 8, 11, 0.78); padding: 4px 8px; border-radius: 4px; pointer-events: none; }
+.cmp .lab.a { left: 10px; } .cmp .lab.b { right: 10px; color: var(--glow); }
+.cmp input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: ew-resize; margin: 0; }
+
+/* disparity */
+.formula { font: 500 24px var(--mono); }
+.formula small { display: block; font: 14px/1.55 var(--body); color: var(--dim); margin-top: 10px; }
+
+table { width: 100%; border-collapse: collapse; font: 13px var(--mono); font-variant-numeric: tabular-nums; }
+th, td { text-align: right; padding: 9px 8px; border-bottom: 1px solid var(--rim); }
+th:first-child, td:first-child { text-align: left; }
+th { font-weight: 400; color: var(--dim); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+tr.hl td { color: var(--glow); }
+.tablewrap { overflow-x: auto; }
+.errs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.errs figure { margin: 0; } .errs img { border-radius: 8px; image-rendering: pixelated; }
+.errs figcaption { font: 12px var(--mono); color: var(--dim); margin-top: 6px; }
+
+/* status */
+.phases { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.phase { border: 1px solid var(--rim); border-radius: 12px; padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
+.phase .n { font: 500 11px var(--mono); color: var(--dim); letter-spacing: 0.1em; }
+.phase b { font-weight: 600; }
+.phase span.s { font-size: 13px; color: var(--dim); }
+.chip { justify-self: start; font: 500 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; border: 1px solid currentColor; }
+.chip.done { color: var(--ok); } .chip.gpu { color: var(--next); }
+footer { margin-top: 80px; padding-top: 20px; border-top: 1px solid var(--rim); font: 12px var(--mono); color: var(--dim); }
+
+@media (max-width: 860px) {
+  .hero-head, .split, .sim { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quad { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .phases { grid-template-columns: minmax(0, 1fr); }
+  nav { display: none; }
+  section { padding-block: 68px 0; }
+  .hud { grid-template-columns: auto minmax(0, 1fr); }
+  .hud .spp:last-child { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+  <div class="top">
+    <div class="mark"><span class="dots"><i></i><i></i></span>Stereo path tracer</div>
+    <nav><a href="#trace">How it works</a><a href="#eyes">Two eyes</a><a href="#noise">Noise</a><a href="#inside">Buffers</a><a href="#depth">Disparity</a><a href="#denoise">Denoiser</a><a href="#status">Progress</a></nav>
+  </div>
+
+  <header class="hero">
+    <div class="hero-head">
+      <h1>Path tracing <span class="l">for</span> <span class="r">both</span> eyes</h1>
+      <p>Every image on this page was rendered by our own physically based path tracer. A VR headset needs two views of the scene, one per eye, 63&nbsp;mm apart, so the renderer traces each eye separately and keeps the two consistent.</p>
+    </div>
+    <div class="visor">
+      <div class="viewer" id="viewer" tabindex="0" aria-label="Stereo view. Drag left or right, or use the arrow keys, to move the camera.">
+        <div class="lens L" id="lensL"><span class="eye l">left eye</span><img id="imgL" alt="Left eye render" width="512" height="512"></div>
+        <div class="lens R" id="lensR"><span class="eye r">right eye</span><img id="imgR" alt="Right eye render" width="512" height="512"></div>
+      </div>
+      <div class="hud">
+        <div class="spp"><b id="hud-spp">1</b><span>samples / pixel</span></div>
+        <div class="yaw">
+          <div class="lbl"><span>camera orbit</span><span id="yaw-val" class="mono">0°</span></div>
+          <input type="range" id="yaw" min="0" max="16" step="1" value="8" aria-label="Camera orbit angle">
+        </div>
+        <div class="spp" style="text-align:right"><b id="hud-paths">0.5M</b><span>paths per eye</span></div>
+      </div>
+      <div class="controls">
+        <div class="row" id="modes" role="group" aria-label="Viewing mode">
+          <button type="button" data-mode="headset" aria-pressed="true">Headset</button>
+          <button type="button" data-mode="cross">Cross-eye</button>
+          <button type="button" data-mode="anaglyph">Anaglyph 3D</button>
+          <button type="button" data-mode="wiggle">Wiggle</button>
+        </div>
+        <div class="row"><span class="hint" id="hint">drag the view to orbit the camera</span><button type="button" id="trace-btn">▶ Trace from 1 sample</button></div>
+      </div>
+    </div>
+    <div class="facts" id="facts"></div>
+  </header>
+
+  <!-- explainer: one pixel -->
+  <section id="trace">
+    <div class="head">
+      <span class="tag">How it works · step by step</span>
+      <h2>How one pixel gets its colour</h2>
+      <p class="dim">A side view through the Cornell box, cut through the gold sphere. Follow one light path from the eye, one step at a time. This is the loop the renderer runs for every sample of every pixel, millions of times per frame.</p>
+    </div>
+    <div class="explain">
+      <canvas id="side" width="880" height="600" aria-label="Side view of the room showing one light path being traced"></canvas>
+      <div class="stepcard">
+        <div class="pips" id="pips" role="group" aria-label="Steps"></div>
+        <span class="stepnum" id="stepnum"></span>
+        <h3 id="steptitle"></h3>
+        <p id="steptext"></p>
+        <div class="math" id="stepmath"></div>
+        <div class="swatches">
+          <div class="sw"><i id="sw-T"></i><div><b>Path colour (T)</b><span id="sw-Tv"></span></div></div>
+          <div class="sw"><i id="sw-L"></i><div><b>Pixel so far</b><span id="sw-Lv"></span></div></div>
+        </div>
+        <div class="more" id="more">
+          <button type="button" data-n="1">+1 path</button>
+          <button type="button" data-n="10">+10 paths</button>
+          <button type="button" data-n="1000">+1000 paths</button>
+          <button type="button" data-n="0">Reset</button>
+        </div>
+        <div class="row">
+          <button type="button" id="st-prev">← Back</button>
+          <button type="button" id="st-next" aria-pressed="true">Next step →</button>
+          <button type="button" id="st-auto">▶ Auto-play</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- explainer: two eyes -->
+  <section id="eyes">
+    <div class="head">
+      <span class="tag">How it works · two eyes</span>
+      <h2>Why each eye sees a different image</h2>
+      <p class="dim">Seen from above. The two eyes look in the same direction, 63&nbsp;mm apart. <b style="color:var(--text)">Drag the sphere.</b> When it comes closer, it lands in very different places in the two images. Far away, the two images almost agree. Your brain turns that difference, the disparity, into depth. This is why the renderer traces both eyes, and why the denoiser must keep them consistent.</p>
+    </div>
+    <div class="eyes2">
+      <canvas id="topdown" width="880" height="640" aria-label="Top-down view of two eyes looking at a draggable sphere, with each eye's image below"></canvas>
+      <div style="display:grid;gap:20px">
+        <div class="bigread">
+          <div><span>depth Z</span><b id="e-z"></b></div>
+          <div><span>disparity d</span><b id="e-d"></b></div>
+        </div>
+        <div class="math">d = IPD · f_px / Z
+  = 0.063 m × 703 px / <span id="e-zm"></span></div>
+        <p class="cap">f<sub>px</sub> = 703 px is the focal length of a 512-pixel-wide image with a 40° field of view, as in our renders. The eye separation is drawn 3× wider than real so the lines are easy to see. The numbers use the real 63&nbsp;mm.</p>
+        <div class="row">
+          <button type="button" id="e-overlay" aria-pressed="false">Overlay both eyes</button>
+          <button type="button" id="e-near">Move close</button>
+          <button type="button" id="e-far">Move far</button>
+        </div>
+        <p class="cap">"Overlay both eyes" draws the left image in red and the right in cyan on top of each other. That is exactly how the anaglyph view at the top of the page works.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- noise -->
+  <section id="noise">
+    <div class="head">
+      <span class="tag">Monte Carlo noise</span>
+      <h2>More samples, less noise, more time</h2>
+      <p class="dim">Each pixel is the average of random light paths. The error falls as 1/√N, so halving the noise costs four times the samples. A headset needs a new frame every 11.1&nbsp;ms (90&nbsp;FPS) for each eye, which leaves room for only a few samples. That gap is what the denoiser fills.</p>
+      <div class="cmd">pathtracer --scene builtin:cornell_glossy --stereo --spp N --clamp 8</div>
+    </div>
+    <div class="split">
+      <div style="display:grid;gap:10px">
+        <div class="pair">
+          <figure><img id="cv-L" class="Li" alt="Left eye at the selected sample count" width="512" height="512"><figcaption class="l">left</figcaption></figure>
+          <figure><img id="cv-R" class="Ri" alt="Right eye at the selected sample count" width="512" height="512"><figcaption class="r">right</figcaption></figure>
+        </div>
+        <input type="range" id="cv-slider" min="0" max="5" step="1" value="0" aria-label="Samples per pixel">
+        <div class="ticks" id="cv-ticks"></div>
+      </div>
+      <div style="display:grid;gap:22px">
+        <div class="readout" id="cv-readout"></div>
+        <div>
+          <h3>Error vs. samples</h3>
+          <p class="cap" style="margin-top:4px">Measured RMSE against a 4096-spp reference, log–log. The dashed line is the theoretical 1/√N slope.</p>
+          <svg id="cv-chart" viewBox="0 0 460 260" role="img" aria-label="RMSE versus samples per pixel" style="width:100%;height:auto;margin-top:8px"></svg>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- inside -->
+  <section id="inside">
+    <div class="head">
+      <span class="tag">Inside the renderer</span>
+      <h2>More than a colour image</h2>
+      <p class="dim">Each frame also writes noise-free buffers from the first surface hit. They tell the denoiser where edges and textures are. The work map counts the BVH nodes and triangles each pixel tests. Bright pixels are expensive, and when they sit next to cheap ones the GPU threads diverge.</p>
+    </div>
+    <div class="quad" id="quad"></div>
+    <div class="split" style="margin-top:8px">
+      <div><div class="cmp" id="nee-cmp"></div><p class="cap" id="nee-cap" style="margin-top:10px"></p></div>
+      <div style="display:grid;gap:14px">
+        <h3>Next-event estimation</h3>
+        <p class="dim">The light is small, so random bounces rarely hit it. NEE fixes this by sending a shadow ray straight to the light at every bounce. Drag the slider: both halves use 16 samples per pixel.</p>
+        <p class="dim">The integrator is a single header shared by the multithreaded CPU backend and the CUDA kernels (<code>__host__ __device__</code>), so both devices run the same algorithm.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- depth -->
+  <section id="depth">
+    <div class="head">
+      <span class="tag">Stereo geometry</span>
+      <h2>Depth from two viewpoints</h2>
+    </div>
+    <div class="split">
+      <div class="panel formula">d = IPD · f<sub>px</sub> / Z
+        <small>Disparity d in pixels for a point at depth Z, with IPD = 0.063 (63&nbsp;mm) and f<sub>px</sub> the focal length in pixels. The same point appears at x<sub>right</sub> = x<sub>left</sub> − d. Unit tests check this convention in both the C++ renderer and the Python training code, because a sign error here would still train without any visible error.</small>
+      </div>
+      <figure style="margin:0;display:grid;grid-template-columns:minmax(0,180px) minmax(0,1fr);gap:18px;align-items:center">
+        <img id="disp" alt="Left-eye disparity map" width="180" height="180" style="border-radius:10px">
+        <figcaption class="cap" id="disp-cap"></figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- denoiser -->
+  <section id="denoise">
+    <div class="head">
+      <span class="tag">Neural denoiser</span>
+      <h2>A few samples in, a clean pair out</h2>
+      <p class="dim">A U-Net takes the noisy colour plus the normal and albedo buffers and predicts the clean image. It was trained on procedurally generated scenes and is shown here on a scene it never saw. The stereo version adds a loss that warps the right eye's output into the left eye and penalises any difference.</p>
+    </div>
+    <div class="split">
+      <div style="display:grid;gap:12px">
+        <div class="cmp" id="dn-cmp"></div>
+        <div class="row" id="dn-spp" role="group" aria-label="Input samples per pixel"></div>
+        <div class="row" id="dn-method" role="group" aria-label="Right side of the slider"></div>
+      </div>
+      <div style="display:grid;gap:18px">
+        <div class="tablewrap"><table id="dn-table"></table></div>
+        <p class="cap" id="dn-note"></p>
+        <div>
+          <h3>Where the two eyes disagree</h3>
+          <p class="cap" style="margin-top:4px">|left − warp(right)|, ×5, on pixels visible to both eyes. In a headset, disagreement shows up as shimmer.</p>
+          <div class="errs" id="errs" style="margin-top:10px"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- status -->
+  <section id="status">
+    <div class="head">
+      <span class="tag">Progress</span>
+      <h2>Where the project stands</h2>
+      <p class="dim">Everything above ran on a laptop: the CPU backend for rendering and the Apple M2 GPU for training. The CUDA kernels are written and use the same integrator. The real-time measurements need an NVIDIA GPU, and those runs come next.</p>
+    </div>
+    <div class="phases" id="phases"></div>
+  </section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script id="demo-data" type="application/json">__DEMO_DATA__</script>
+<script>
+(() => {
+  const D = JSON.parse(document.getElementById("demo-data").textContent);
+  const $ = (id) => document.getElementById(id);
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const fmt = (x, d = 1) => Number(x).toFixed(d);
+  const fmtMs = (ms) => ms >= 1000 ? fmt(ms / 1000, 1) + " s" : fmt(ms, 0) + " ms";
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const pressGroup = (el, btn) => el.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", b === btn));
+  const preload = (srcs) => srcs.forEach((s) => { const i = new Image(); i.src = s; });
+
+  // =============== headset viewer ===============
+  const SC = D.stereo_conv, OR = D.orbit;
+  const center = Math.floor(OR.frames.length / 2);
+  const st = { src: "trace", k: 0, frame: center, mode: "headset", wig: 0, wigOn: false };
+  preload(SC.flatMap((s) => [s.left, s.right]));
+  setTimeout(() => preload(OR.frames.flatMap((f) => [f.left_color, f.right_color])), 1500);
+
+  function views() {
+    if (st.src === "trace") { const s = SC[st.k]; return { L: s.left, R: s.right, A: s.anaglyph, spp: s.spp }; }
+    const f = OR.frames[st.frame]; return { L: f.left_color, R: f.right_color, A: f.anaglyph, spp: OR.spp };
+  }
+  const lensL = $("lensL"), lensR = $("lensR"), imgL = $("imgL"), imgR = $("imgR");
+  function paint() {
+    const v = views(), m = st.mode;
+    const single = m === "anaglyph" || m === "wiggle";
+    $("viewer").classList.toggle("single", single);
+    lensR.hidden = single;
+    lensL.className = "lens " + (m === "anaglyph" ? "A" : m === "cross" ? "R" : "L");
+    lensR.className = "lens " + (m === "cross" ? "L" : "R");
+    const tagL = lensL.querySelector(".eye"), tagR = lensR.querySelector(".eye");
+    if (m === "anaglyph") { imgL.src = v.A; tagL.textContent = "red–cyan glasses"; tagL.className = "eye"; }
+    else if (m === "wiggle") { const right = st.wig % 2 === 1; imgL.src = right ? v.R : v.L; tagL.textContent = right ? "right eye" : "left eye"; tagL.className = "eye " + (right ? "r" : "l"); lensL.className = "lens " + (right ? "R" : "L"); }
+    else if (m === "cross") { imgL.src = v.R; imgR.src = v.L; tagL.textContent = "right eye"; tagL.className = "eye r"; tagR.textContent = "left eye"; tagR.className = "eye l"; }
+    else { imgL.src = v.L; imgR.src = v.R; tagL.textContent = "left eye"; tagL.className = "eye l"; tagR.textContent = "right eye"; tagR.className = "eye r"; }
+    $("hud-spp").textContent = v.spp.toLocaleString();
+    $("hud-paths").textContent = fmt(v.spp * 512 * 512 / 1e6, v.spp < 4 ? 2 : 0) + "M";
+    const yaw = st.src === "trace" ? 0 : OR.yaw[st.frame];
+    $("yaw-val").textContent = (yaw > 0 ? "+" : "") + fmt(yaw, 0) + "°";
+  }
+  const hints = { headset: "drag the view to orbit the camera", cross: "cross your eyes until the two images merge into one",
+    anaglyph: "use red–cyan 3D glasses, red lens on the left", wiggle: "the eyes alternate; the depth jump is the disparity" };
+  $("modes").querySelectorAll("button").forEach((b) => b.onclick = () => {
+    st.mode = b.dataset.mode; pressGroup($("modes"), b); $("hint").textContent = hints[st.mode];
+    clearInterval(st.wigOn); st.wigOn = false;
+    if (st.mode === "wiggle" && !reduce) st.wigOn = setInterval(() => { st.wig++; paint(); }, 170);
+    paint();
+  });
+
+  let traceTimer = 0;
+  function trace() {
+    clearTimeout(traceTimer); st.src = "trace"; st.k = 0; paint();
+    if (reduce) { st.k = SC.length - 1; paint(); return; }
+    const step = () => { if (st.k < SC.length - 1) { st.k++; paint(); traceTimer = setTimeout(step, 750); } };
+    traceTimer = setTimeout(step, 900);
+  }
+  $("trace-btn").onclick = trace;
+  function setFrame(i) {
+    clearTimeout(traceTimer);
+    st.src = "orbit"; st.frame = Math.max(0, Math.min(OR.frames.length - 1, i)); $("yaw").value = st.frame; paint();
+  }
+  $("yaw").max = OR.frames.length - 1; $("yaw").value = center;
+  $("yaw").oninput = (e) => setFrame(+e.target.value);
+  const viewer = $("viewer");
+  let drag = null;
+  viewer.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, f: st.src === "orbit" ? st.frame : center }; viewer.classList.add("dragging"); viewer.setPointerCapture(e.pointerId); });
+  viewer.addEventListener("pointermove", (e) => { if (!drag) return; const w = viewer.clientWidth; setFrame(drag.f + Math.round((e.clientX - drag.x) / w * OR.frames.length * 1.4)); });
+  const end = () => { drag = null; viewer.classList.remove("dragging"); };
+  viewer.addEventListener("pointerup", end); viewer.addEventListener("pointercancel", end);
+  viewer.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); setFrame((st.src === "orbit" ? st.frame : center) + (e.key === "ArrowRight" ? 1 : -1)); }
+  });
+  trace();
+
+  // facts
+  const conv = D.convergence, dn = D.denoiser;
+  const mpps = 512 * 512 * 1024 / (conv[conv.length - 1].ms / 1000) / 1e6;
+  $("facts").innerHTML = [
+    [`${fmt(mpps, 1)}M`, "light paths per second, 8 CPU threads"],
+    [`${fmt(D.threads.one_thread_ms / D.threads.all_threads_ms, 1)}×`, "faster than the single-thread reference"],
+    [`${fmt(D.stereo.disp_min, 0)}–${fmt(D.stereo.disp_max, 0)} px`, "disparity between the eyes at 512²"],
+    [`+${fmt(dn.summary["baseline@1"].psnr - dn.summary["noisy@1"].psnr, 1)} dB`, "image quality gained by the denoiser at 1 spp"],
+  ].map(([b, s]) => `<div><b>${b}</b><span>${s}</span></div>`).join("");
+
+  // =============== explainer 1: one pixel, step by step (side view) ===============
+  (function onePixel() {
+    const cv = $("side"), g = cv.getContext("2d"), CW = cv.width, CH = cv.height;
+    const H0 = -0.62, Y1 = 1.09, S = CW / 1.72;
+    const X = (h) => (h - H0) * S, Y = (y) => (Y1 - y) * S;
+    const WHITE = [0.73, 0.73, 0.73], GOLD = [0.9, 0.7, 0.3], LE = [8, 7.6, 6.6], LA = 0.4, LB = 0.6, LY = 0.999;
+    const segs = [
+      { a: [0, 0], b: [1, 0], m: "d" }, { a: [1, 0], b: [1, 1], m: "d" },
+      { a: [0, 1], b: [LA, 1], m: "d" }, { a: [LB, 1], b: [1, 1], m: "d" }, { a: [LA, LY], b: [LB, LY], m: "l" },
+    ];
+    const ball = { c: [0.6, 0.18], r: 0.18 };
+    const E = [-0.45, 0.4], PLANE = -0.3, HALF = 0.15, NPIX = 8;
+    const norm = (v) => { const l = Math.hypot(v[0], v[1]); return [v[0] / l, v[1] / l]; };
+    const add = (p, d, t) => [p[0] + d[0] * t, p[1] + d[1] * t];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+
+    function hit(o, d) {
+      let best = null;
+      for (const s of segs) {
+        const ex = s.b[0] - s.a[0], ey = s.b[1] - s.a[1], den = d[0] * ey - d[1] * ex;
+        if (Math.abs(den) < 1e-12) continue;
+        const t = ((s.a[0] - o[0]) * ey - (s.a[1] - o[1]) * ex) / den, u = ((s.a[0] - o[0]) * d[1] - (s.a[1] - o[1]) * d[0]) / den;
+        if (t > 1e-6 && u >= 0 && u <= 1 && (!best || t < best.t)) {
+          let n = norm([-ey, ex]); if (dot(n, d) > 0) n = [-n[0], -n[1]];
+          best = { t, p: add(o, d, t), n, m: s.m };
+        }
+      }
+      const f = [o[0] - ball.c[0], o[1] - ball.c[1]], bq = dot(f, d), disc = bq * bq - (dot(f, f) - ball.r * ball.r);
+      if (disc >= 0) {
+        const t = -bq - Math.sqrt(disc);
+        if (t > 1e-6 && (!best || t < best.t)) { const p = add(o, d, t); best = { t, p, n: [(p[0] - ball.c[0]) / ball.r, (p[1] - ball.c[1]) / ball.r], m: "g" }; }
+      }
+      return best;
+    }
+    const reflect = (d, n) => { const k = 2 * dot(d, n); return [d[0] - k * n[0], d[1] - k * n[1]]; };
+    function direct(p, n, T, a, q) {  // next-event estimation toward light point q
+      let w = [q[0] - p[0], q[1] - p[1]]; const dist = Math.hypot(w[0], w[1]); w = [w[0] / dist, w[1] / dist];
+      const cosH = dot(n, w), cosL = w[1];
+      if (cosH <= 0 || cosL <= 0) return { ok: false, c: [0, 0, 0] };
+      const o = hit(add(p, n, 1e-5), w), ok = !o || o.m === "l" || o.t > dist - 1e-4;
+      const k = ok ? cosH * cosL / dist * (LB - LA) * 0.5 : 0;
+      return { ok, c: T.map((t, i) => t * a[i] * LE[i] * k) };
+    }
+
+    // ---- the scripted path ----
+    const P1 = [0.25, 0], d0 = norm([P1[0] - E[0], P1[1] - E[1]]);
+    const pixY = E[1] + d0[1] * ((PLANE - E[0]) / d0[0]);
+    const pix = Math.min(NPIX - 1, Math.max(0, Math.floor((E[1] + HALF - pixY) / (2 * HALF) * NPIX)));
+    const Q1 = [0.47, LY], nee1 = direct(P1, [0, 1], [1, 1, 1], WHITE, Q1);
+    const good = [];
+    for (let a = 3; a <= 177; a += 0.25) {
+      const d = [Math.cos(a * Math.PI / 180), Math.sin(a * Math.PI / 180)], h1 = hit(P1, d);
+      if (!h1 || h1.m !== "g") continue;
+      const r = reflect(d, h1.n), h2 = hit(add(h1.p, h1.n, 1e-5), r);
+      if (h2 && h2.m === "l") good.push({ d, h1, r, h2 });
+    }
+    const pick = good[Math.floor(good.length / 2)];
+    const P2 = pick.h1.p, N2 = pick.h1.n, P3 = pick.h2.p;
+    const T1 = WHITE.slice(), T2 = WHITE.map((w, i) => w * GOLD[i]);
+    const L1 = nee1.c, L2 = L1.map((v, i) => v + T2[i] * LE[i]);
+
+    const steps = [
+      { title: "Shoot a ray through the pixel", T: [1, 1, 1], L: [0, 0, 0],
+        text: "Every sample starts the same way. A ray leaves the eye, passes through one pixel of the screen and travels until it hits the nearest surface, here the floor. The renderer finds that surface quickly with a BVH, a tree of bounding boxes.",
+        math: "ray(t) = eye + t · dir\nfind the smallest t that hits geometry" },
+      { title: "Ask the light directly", T: [1, 1, 1], L: L1,
+        text: "From the hit point, a shadow ray goes to a random point on the ceiling light. Nothing blocks it, so this spot on the floor is lit directly, and that light is added to the pixel. This trick is called next-event estimation.",
+        math: "L += T · albedo · Le · cosθ · cosθ' / r²" },
+      { title: "Bounce in a random direction", T: T1, L: L1,
+        text: "Light also arrives indirectly, after bouncing off other surfaces. The renderer picks one random direction from all the possible ones (the fan) and follows it. The floor absorbs some light, so the path colour T is multiplied by the floor's colour.",
+        math: "dir = random direction above the surface\nT *= albedo(floor)" },
+      { title: "Reflect off the gold sphere", T: T2, L: L1,
+        text: "Metal reflects like a mirror: the angle in equals the angle out around the surface normal (dashed). Gold absorbs blue light, so the path colour T turns gold.",
+        math: "dir' = dir − 2 (dir · n) n\nT *= gold = (0.9, 0.7, 0.3)" },
+      { title: "Reach the light", T: T2, L: L2,
+        text: "The reflected ray hits the light. Its brightness, filtered by T, is added to the pixel. This is light that bounced off the gold sphere onto the floor, which is why the floor near the sphere has a warm glow.",
+        math: "L += T · Le" },
+      { title: "One sample is finished", T: T2, L: L2,
+        text: "The pixel now holds direct light plus light reflected off the sphere. A path also stops when it leaves the room, or at random after 3 bounces (Russian roulette). Paths that survive are boosted, so the average stays correct.",
+        math: "pixel sample = direct + indirect" },
+      { title: "Repeat and average", T: null, L: null,
+        text: "The next sample picks different random directions and gets a different answer. One sample is noise; the average of many is the true colour. Add paths and watch the estimate settle. The error shrinks as 1/√N, which is why a real-time frame with only a few samples needs a denoiser.",
+        math: "" },
+    ];
+
+    // ---- random paths for the last step ----
+    let sum = [0, 0, 0], n = 0, hist = [], recent = [];
+    function randomPath() {
+      const y = E[1] + HALF - (pix + Math.random()) / NPIX * 2 * HALF;
+      let o = E, d = norm([PLANE - E[0], y - E[1]]), T = [1, 1, 1], L = [0, 0, 0], spec = true;
+      const pts = [o], sh = [];
+      for (let depth = 0; depth < 8; depth++) {
+        const h = hit(o, d);
+        if (!h) { pts.push(add(o, d, 1.2)); break; }
+        pts.push(h.p);
+        if (h.m === "l") { if (spec && d[1] > 0) L = L.map((v, i) => v + T[i] * LE[i]); break; }
+        if (h.m === "d") {
+          const q = [LA + Math.random() * (LB - LA), LY], r = direct(h.p, h.n, T, WHITE, q);
+          L = L.map((v, i) => v + r.c[i]); sh.push([h.p, q, r.ok]);
+          const phi = Math.asin(2 * Math.random() - 1), c = Math.cos(phi), s = Math.sin(phi);
+          d = [h.n[0] * c - h.n[1] * s, h.n[0] * s + h.n[1] * c];
+          T = T.map((t, i) => t * WHITE[i]); spec = false;
+        } else { d = reflect(d, h.n); T = T.map((t, i) => t * GOLD[i]); spec = true; }
+        o = add(h.p, d, 1e-5);
+        if (depth >= 2) { const p = Math.min(0.95, Math.max(...T)); if (Math.random() > p) break; T = T.map((t) => t / p); }
+      }
+      return { pts, sh, L };
+    }
+    const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    function addPaths(k) {
+      for (let i = 0; i < k; i++) {
+        const p = randomPath(); sum = sum.map((v, j) => v + p.L[j]); n++;
+        if (k - i <= 12) recent.push(p);
+        if (n <= 20 || Math.log2(n) % 0.25 < 1e-9 || n % Math.max(1, Math.floor(n / 40)) === 0) hist.push([n, lum(sum) / n]);
+      }
+      recent = recent.slice(-12);
+    }
+
+    // ---- drawing ----
+    const tone = (c) => `rgb(${c.map((v) => Math.round(255 * (v / (1 + v)) ** (1 / 2.2))).join(",")})`;
+    const tint = (T) => { const m = Math.max(...T, 1e-6); return `rgb(${T.map((v) => Math.round(255 * Math.min(1, v / m * 0.95 + 0.05))).join(",")})`; };
+    const C = { rim: css("--rim"), dim: css("--dim"), glow: css("--glow"), text: css("--text"), left: css("--left") };
+    function line(a, b, col, w = 2, dash = null, alpha = 1) {
+      g.save(); g.globalAlpha = alpha; g.strokeStyle = col; g.lineWidth = w; if (dash) g.setLineDash(dash);
+      g.beginPath(); g.moveTo(X(a[0]), Y(a[1])); g.lineTo(X(b[0]), Y(b[1])); g.stroke(); g.restore();
+    }
+    function dotAt(p, col, r = 5) { g.fillStyle = col; g.beginPath(); g.arc(X(p[0]), Y(p[1]), r, 0, 2 * Math.PI); g.fill(); }
+    function label(t, p, col = C.dim, align = "center", dy = 0) { g.fillStyle = col; g.font = "13px DM Mono, monospace"; g.textAlign = align; g.fillText(t, X(p[0]), Y(p[1]) + dy); }
+    const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+
+    function drawRoom() {
+      g.clearRect(0, 0, CW, CH);
+      const gl = g.createRadialGradient(X(0.5), Y(1), 4, X(0.5), Y(1), S * 0.75);
+      gl.addColorStop(0, "rgba(255,241,207,0.20)"); gl.addColorStop(1, "rgba(255,241,207,0)");
+      g.fillStyle = gl; g.fillRect(0, 0, CW, CH);
+      for (const s of segs) line(s.a, s.b, s.m === "l" ? C.glow : "#9da2ad", s.m === "l" ? 8 : 4);
+      const bg = g.createRadialGradient(X(ball.c[0] - 0.06), Y(ball.c[1] + 0.07), 3, X(ball.c[0]), Y(ball.c[1]), ball.r * S);
+      bg.addColorStop(0, "#fff2bf"); bg.addColorStop(0.6, "#c9922f"); bg.addColorStop(1, "#6e4a12");
+      g.fillStyle = bg; g.beginPath(); g.arc(X(ball.c[0]), Y(ball.c[1]), ball.r * S, 0, 2 * Math.PI); g.fill();
+      label("ceiling light", [0.5, 1], C.glow, "center", -14);
+      label("floor", [0.08, 0], C.dim, "left", 22);
+      label("back wall", [1, 0.55], C.dim, "right", 0);
+      label("gold sphere", [0.6, 0.36], C.text, "center", -10);
+      label("open side", [0, 0.5], C.dim, "center", 0);
+      // eye + screen
+      line([PLANE, E[1] - HALF], [PLANE, E[1] + HALF], C.dim, 3);
+      for (let i = 0; i <= NPIX; i++) { const y = E[1] + HALF - i / NPIX * 2 * HALF; line([PLANE - 0.012, y], [PLANE + 0.012, y], C.dim, 1); }
+      const py0 = E[1] + HALF - pix / NPIX * 2 * HALF, py1 = py0 - 2 * HALF / NPIX;
+      g.fillStyle = C.glow; g.fillRect(X(PLANE) - 6, Y(py0), 12, Y(py1) - Y(py0));
+      label("screen", [PLANE, E[1] + HALF], C.dim, "center", -12);
+      label("pixel", [PLANE + 0.03, (py0 + py1) / 2], C.glow, "left", 4);
+      dotAt(E, C.left, 9); label("eye", E, C.left, "center", 28);
+    }
+
+    function fan(p, nrm) {
+      for (let a = -80; a <= 80; a += 10) {
+        const r = a * Math.PI / 180, d = [nrm[0] * Math.cos(r) - nrm[1] * Math.sin(r), nrm[0] * Math.sin(r) + nrm[1] * Math.cos(r)];
+        line(p, add(p, d, 0.22), C.text, 1, null, 0.18);
+      }
+    }
+    function graph() {
+      const gx = 18, gy = 18, gw = 300, gh = 150;
+      g.fillStyle = "rgba(7,8,11,0.75)"; g.fillRect(gx, gy, gw, gh); g.strokeStyle = C.rim; g.strokeRect(gx, gy, gw, gh);
+      g.fillStyle = C.dim; g.font = "11px DM Mono, monospace"; g.textAlign = "left";
+      g.fillText("pixel brightness vs. number of paths", gx + 10, gy + 18);
+      if (hist.length < 2) return;
+      const nmax = Math.max(10, n), vs = hist.map((h) => h[1]), lo = Math.min(...vs), hi = Math.max(...vs);
+      const px = (k) => gx + 12 + Math.log10(k) / Math.log10(nmax) * (gw - 24);
+      const py = (v) => gy + gh - 14 - (v - lo) / (hi - lo || 1) * (gh - 46);
+      g.strokeStyle = C.glow; g.lineWidth = 2; g.beginPath();
+      hist.forEach(([k, v], i) => i ? g.lineTo(px(k), py(v)) : g.moveTo(px(k), py(v))); g.stroke();
+      const final = lum(sum) / n; g.setLineDash([4, 4]); g.strokeStyle = C.dim; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(gx + 12, py(final)); g.lineTo(gx + gw - 12, py(final)); g.stroke(); g.setLineDash([]);
+      g.fillStyle = C.dim; g.fillText("1", gx + 10, gy + gh - 2); g.textAlign = "right"; g.fillText(n.toLocaleString(), gx + gw - 10, gy + gh - 2);
+    }
+
+    let step = 0, prog = 1, seen = new Set([0]);
+    function draw() {
+      drawRoom();
+      const p = (k) => (k === step ? prog : 1);
+      const seg = (a, b, k, col, w = 2.5) => line(a, lerp(a, b, p(k)), col, w);
+      if (step === 6) {
+        for (const r of recent) {
+          for (const [a, b, ok] of r.sh) line(a, b, ok ? C.glow : "#4a4f5c", 1, [4, 4], 0.45);
+          for (let i = 1; i < r.pts.length; i++) line(r.pts[i - 1], r.pts[i], C.text, 1.4, null, 0.55);
+        }
+        graph();
+        return;
+      }
+      seg(E, P1, 0, "#ffffff"); if (step > 0 || prog === 1) dotAt(P1, "#fff", 5);
+      if (step >= 1) { line(P1, lerp(P1, Q1, p(1)), C.glow, 2, [6, 5]); if (step > 1 || prog === 1) label(nee1.ok ? "light visible ✓" : "blocked ✗", lerp(P1, Q1, 0.55), C.glow, "left", 0); }
+      if (step === 2) fan(P1, [0, 1]);
+      if (step >= 2) { seg(P1, P2, 2, tint(T1)); if (step > 2 || prog === 1) dotAt(P2, "#fff", 5); }
+      if (step >= 3) { line(add(P2, N2, -0.02), add(P2, N2, 0.2), C.dim, 1.2, [3, 4]); seg(P2, P3, 3, tint(T2), 3); }
+      if (step >= 4 && (step > 4 || prog === 1)) {
+        const bg = g.createRadialGradient(X(P3[0]), Y(P3[1]), 1, X(P3[0]), Y(P3[1]), 34);
+        bg.addColorStop(0, "rgba(255,241,207,0.95)"); bg.addColorStop(1, "rgba(255,241,207,0)"); g.fillStyle = bg; g.fillRect(X(P3[0]) - 40, Y(P3[1]) - 40, 80, 80);
+      }
+      if (step === 5) label("1 sample  =  1 path", [0.5, 0.62], C.text, "center", 0);
+    }
+    function animate() {
+      if (reduce) { prog = 1; draw(); return; }
+      const t0 = performance.now();
+      const tick = (now) => { prog = Math.min(1, (now - t0) / 650); draw(); if (prog < 1) requestAnimationFrame(tick); };
+      prog = 0; requestAnimationFrame(tick);
+    }
+    const fmt3 = (c) => c.map((v) => v.toFixed(2)).join(", ");
+    function show() {
+      const s = steps[step];
+      seen.add(step);
+      $("stepnum").textContent = `Step ${step + 1} of ${steps.length}`;
+      $("steptitle").textContent = s.title; $("steptext").textContent = s.text;
+      $("pips").querySelectorAll("button").forEach((b, i) => { b.setAttribute("aria-current", i === step); b.classList.toggle("seen", seen.has(i)); });
+      $("more").classList.toggle("on", step === 6);
+      const T = s.T ?? (n ? null : [1, 1, 1]), L = s.L ?? (n ? sum.map((v) => v / n) : [0, 0, 0]);
+      $("sw-T").style.background = T ? tint(T) : "transparent"; $("sw-Tv").textContent = T ? fmt3(T) : "a different one per path";
+      $("sw-L").style.background = tone(L); $("sw-Lv").textContent = step === 6 ? `average of ${n.toLocaleString()} paths` : fmt3(L);
+      $("stepmath").textContent = step === 6 ? `pixel = (1/N) Σ path_i      N = ${n.toLocaleString()}` : s.math;
+      $("st-prev").disabled = step === 0; $("st-next").disabled = step === steps.length - 1;
+    }
+    function go(k) { step = Math.max(0, Math.min(steps.length - 1, k)); if (step === 6 && n === 0) addPaths(10); show(); animate(); }
+    $("pips").innerHTML = steps.map((s, i) => `<button type="button" aria-label="Step ${i + 1}: ${s.title}"></button>`).join("");
+    $("pips").querySelectorAll("button").forEach((b, i) => b.onclick = () => { stopAuto(); go(i); });
+    $("st-prev").onclick = () => { stopAuto(); go(step - 1); };
+    $("st-next").onclick = () => { stopAuto(); go(step + 1); };
+    $("more").querySelectorAll("button").forEach((b) => b.onclick = () => {
+      const k = +b.dataset.n; if (!k) { sum = [0, 0, 0]; n = 0; hist = []; recent = []; } else addPaths(k);
+      show(); draw();
+    });
+    let auto = 0;
+    function stopAuto() { clearInterval(auto); auto = 0; $("st-auto").textContent = "▶ Auto-play"; }
+    $("st-auto").onclick = () => {
+      if (auto) return stopAuto();
+      if (step === steps.length - 1) go(0);
+      $("st-auto").textContent = "❚❚ Pause";
+      auto = setInterval(() => { if (step >= steps.length - 1) return stopAuto(); go(step + 1); if (step === 6) addPaths(200), show(), draw(); }, 4200);
+    };
+    go(0);
+  })();
+
+  // =============== explainer 2: two eyes (top-down) ===============
+  (function twoEyes() {
+    const cv = $("topdown"), g = cv.getContext("2d"), CW = cv.width, CH = cv.height;
+    const IPD = 0.063, F = 703, DRAW_IPD = IPD * 3, ZMAX = 3.3, WALL = 3.2, FOV = 20 * Math.PI / 180;
+    const S = 168, OX = 280, OY = 600;           // diagram: x right, depth Z up, eyes at the bottom
+    const X = (x) => OX + x * S, Y = (z) => OY - z * S;
+    const C = { rim: css("--rim"), dim: css("--dim"), glow: css("--glow"), text: css("--text"), left: css("--left"), right: css("--right"), shell: css("--shell") };
+    const eyes = [{ x: -DRAW_IPD / 2, real: -IPD / 2, col: C.left, name: "left" }, { x: DRAW_IPD / 2, real: IPD / 2, col: C.right, name: "right" }];
+    const obj = { x: 0.18, z: 1.0, r: 0.12 };
+    let overlay = false;
+    const wallPts = []; for (let x = -1.2; x <= 1.2001; x += 0.2) wallPts.push(x);
+
+    function frame(fx, fy, fw, eyeList, title) {
+      g.save();
+      g.fillStyle = "#000"; g.fillRect(fx, fy, fw, fw);
+      g.beginPath(); g.rect(fx, fy, fw, fw); g.clip();
+      const k = fw / 512, u = (X, Z, e) => fx + (256 + F * (X - e.real) / Z) * k;
+      g.globalCompositeOperation = overlay ? "lighter" : "source-over";
+      for (const e of eyeList) {
+        const col = overlay ? e.col : "#d9d6cf";
+        g.fillStyle = col; g.globalAlpha = 0.55;
+        for (const wx of wallPts) g.fillRect(u(wx, WALL, e) - 1.5, fy + fw * 0.2, 3, fw * 0.6);
+        g.globalAlpha = 1;
+        const cx = u(obj.x, obj.z, e), rr = Math.max(3, F * obj.r / obj.z * k);
+        const gr = g.createRadialGradient(cx - rr * 0.35, fy + fw * 0.55 - rr * 0.35, 1, cx, fy + fw * 0.55, rr);
+        if (overlay) { gr.addColorStop(0, e.col); gr.addColorStop(1, e.col); } else { gr.addColorStop(0, "#fff2bf"); gr.addColorStop(1, "#8a5d17"); }
+        g.fillStyle = gr; g.beginPath(); g.arc(cx, fy + fw * 0.55, rr, 0, 2 * Math.PI); g.fill();
+        if (!overlay) {  // where the sphere sits in the other eye's image
+          const other = eyes.find((o) => o !== e), ox = u(obj.x, obj.z, other), cy = fy + fw * 0.55;
+          g.strokeStyle = other.col; g.lineWidth = 1.5; g.setLineDash([4, 4]);
+          g.beginPath(); g.arc(ox, cy, rr, 0, 2 * Math.PI); g.stroke(); g.setLineDash([]);
+          const ay = cy + rr + 16; g.strokeStyle = C.glow; g.fillStyle = C.glow; g.lineWidth = 1.5;
+          g.beginPath(); g.moveTo(cx, ay); g.lineTo(ox, ay); g.stroke();
+          for (const [x0, s] of [[cx, Math.sign(cx - ox)], [ox, Math.sign(ox - cx)]]) { g.beginPath(); g.moveTo(x0, ay); g.lineTo(x0 - s * 6, ay - 4); g.lineTo(x0 - s * 6, ay + 4); g.fill(); }
+          g.font = "12px DM Mono, monospace"; g.textAlign = "center"; g.fillText(`d = ${(IPD * F / obj.z).toFixed(0)} px`, (cx + ox) / 2, ay + 18);
+          g.fillStyle = other.col; g.textAlign = "left"; g.fillText(`- - ${other.name} eye`, fx + 8, fy + fw - 10);
+        }
+      }
+      g.restore();
+      g.strokeStyle = eyeList.length === 1 ? eyeList[0].col : C.rim; g.lineWidth = 2; g.strokeRect(fx, fy, fw, fw);
+      g.fillStyle = eyeList.length === 1 ? eyeList[0].col : C.text; g.font = "12px DM Mono, monospace"; g.textAlign = "left";
+      g.fillText(title, fx, fy - 8);
+    }
+
+    function draw() {
+      g.clearRect(0, 0, CW, CH);
+      // back wall
+      g.strokeStyle = "#9da2ad"; g.lineWidth = 4; g.beginPath(); g.moveTo(X(-1.25), Y(WALL)); g.lineTo(X(1.25), Y(WALL)); g.stroke();
+      g.fillStyle = "#9da2ad"; for (const wx of wallPts) g.fillRect(X(wx) - 1.5, Y(WALL) - 9, 3, 7);
+      g.fillStyle = C.dim; g.font = "12px DM Mono, monospace"; g.textAlign = "center"; g.fillText("back wall", X(0), Y(WALL) - 16);
+      for (const e of eyes) {
+        g.strokeStyle = e.col; g.globalAlpha = 0.28; g.lineWidth = 1; g.setLineDash([3, 5]); g.beginPath();
+        for (const s of [-1, 1]) { g.moveTo(X(e.x), Y(0)); g.lineTo(X(e.x + s * Math.tan(FOV) * WALL), Y(WALL)); }
+        g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+        g.strokeStyle = e.col; g.lineWidth = 2; g.beginPath(); g.moveTo(X(e.x), Y(0)); g.lineTo(X(obj.x), Y(obj.z)); g.stroke();
+      }
+      const gr = g.createRadialGradient(X(obj.x) - 8, Y(obj.z) - 8, 2, X(obj.x), Y(obj.z), obj.r * S);
+      gr.addColorStop(0, "#fff2bf"); gr.addColorStop(1, "#8a5d17");
+      g.fillStyle = gr; g.beginPath(); g.arc(X(obj.x), Y(obj.z), obj.r * S, 0, 2 * Math.PI); g.fill();
+      g.strokeStyle = C.glow; g.lineWidth = 1.5; g.setLineDash([2, 4]); g.beginPath(); g.arc(X(obj.x), Y(obj.z), obj.r * S + 7, 0, 2 * Math.PI); g.stroke(); g.setLineDash([]);
+      g.fillStyle = C.glow; g.textAlign = "center"; g.fillText("drag me", X(obj.x), Y(obj.z) - obj.r * S - 14);
+      for (const e of eyes) { g.fillStyle = e.col; g.beginPath(); g.arc(X(e.x), Y(0), 8, 0, 2 * Math.PI); g.fill(); }
+      g.fillStyle = C.left; g.textAlign = "right"; g.fillText("L", X(eyes[0].x) - 14, Y(0) + 4);
+      g.fillStyle = C.right; g.textAlign = "left"; g.fillText("R", X(eyes[1].x) + 14, Y(0) + 4);
+      // depth ruler
+      g.strokeStyle = C.rim; g.lineWidth = 1; g.beginPath(); g.moveTo(X(-1.3), Y(0)); g.lineTo(X(-1.3), Y(WALL)); g.stroke();
+      g.fillStyle = C.dim; g.textAlign = "right";
+      for (let z = 0.5; z <= 3.01; z += 0.5) { g.fillText(z.toFixed(1) + " m", X(-1.33), Y(z) + 4); g.beginPath(); g.moveTo(X(-1.3), Y(z)); g.lineTo(X(-1.26), Y(z)); g.stroke(); }
+      // what each eye sees
+      const fx = 540, fw = 300;
+      if (overlay) frame(fx, 150, fw, eyes, "both eyes overlaid (anaglyph)");
+      else { frame(fx, 40, 250, [eyes[0]], "what the left eye sees"); frame(fx, 340, 250, [eyes[1]], "what the right eye sees"); }
+      const d = IPD * F / obj.z;
+      $("e-z").textContent = obj.z.toFixed(2) + " m"; $("e-zm").textContent = obj.z.toFixed(2) + " m = " + d.toFixed(1) + " px";
+      $("e-d").textContent = d.toFixed(1) + " px";
+    }
+    function toWorld(ev) {
+      const r = cv.getBoundingClientRect(), sx = (ev.clientX - r.left) * CW / r.width, sy = (ev.clientY - r.top) * CH / r.height;
+      return { x: (sx - OX) / S, z: (OY - sy) / S };
+    }
+    let drag = false;
+    cv.addEventListener("pointerdown", (e) => { const w = toWorld(e); if (Math.hypot(w.x - obj.x, w.z - obj.z) < obj.r + 0.25) { drag = true; cv.setPointerCapture(e.pointerId); } });
+    cv.addEventListener("pointermove", (e) => {
+      if (!drag) return; const w = toWorld(e);
+      obj.x = Math.max(-0.95, Math.min(0.95, w.x)); obj.z = Math.max(0.45, Math.min(2.9, w.z)); draw();
+    });
+    const up = () => { drag = false; }; cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+    $("e-overlay").onclick = (e) => { overlay = !overlay; e.currentTarget.setAttribute("aria-pressed", overlay); draw(); };
+    $("e-near").onclick = () => { obj.z = 0.5; obj.x = 0.05; draw(); };
+    $("e-far").onclick = () => { obj.z = 2.8; draw(); };
+    draw();
+  })();
+
+  // =============== convergence ===============
+  $("cv-ticks").innerHTML = SC.map((s) => `<span>${s.spp}</span>`).join("");
+  function setCv(i) {
+    const s = SC[i];
+    $("cv-L").src = s.left; $("cv-R").src = s.right;
+    $("cv-readout").innerHTML = [["samples / pixel", s.spp.toLocaleString()], ["both eyes", fmtMs(s.ms)],
+      ["PSNR", s.psnr ? fmt(s.psnr, 1) + " dB" : "reference"]].map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join("");
+    chart(SC[i].spp);
+  }
+  function chart(selSpp) {
+    const svg = $("cv-chart"), L = 56, R = 444, T = 14, B = 222;
+    const xs = conv.map((c) => Math.log2(c.spp)), ys = conv.map((c) => Math.log10(c.rmse));
+    const y0 = Math.floor(Math.min(...ys) * 2) / 2 - 0.25, y1 = Math.ceil(Math.max(...ys) * 2) / 2;
+    const X = (v) => L + v / 10 * (R - L), Y = (v) => B - (v - y0) / (y1 - y0) * (B - T);
+    const rim = css("--rim"), glow = css("--glow"), dim = css("--dim");
+    let s = "";
+    for (let p = 0; p <= 10; p += 2) s += `<line x1="${X(p)}" x2="${X(p)}" y1="${T}" y2="${B}" stroke="${rim}"/><text x="${X(p)}" y="${B + 16}" text-anchor="middle">${2 ** p}</text>`;
+    for (let v = Math.ceil(y0 * 2) / 2; v <= y1 + 1e-9; v += 0.5) s += `<line x1="${L}" x2="${R}" y1="${Y(v)}" y2="${Y(v)}" stroke="${rim}"/><text x="${L - 8}" y="${Y(v) + 4}" text-anchor="end">${(10 ** v).toPrecision(2)}</text>`;
+    s += `<text x="${(L + R) / 2}" y="${B + 34}" text-anchor="middle">samples per pixel</text>`;
+    s += `<text x="14" y="${(T + B) / 2}" text-anchor="middle" transform="rotate(-90 14 ${(T + B) / 2})">RMSE</text>`;
+    const ty = (x) => ys[0] - 0.5 * Math.log10(2) * x;
+    s += `<line x1="${X(0)}" y1="${Y(ty(0))}" x2="${X(10)}" y2="${Y(ty(10))}" stroke="${dim}" stroke-dasharray="4 4"/>`;
+    s += `<polyline fill="none" stroke="${glow}" stroke-width="2.5" points="${xs.map((x, i) => `${X(x)},${Y(ys[i])}`).join(" ")}"/>`;
+    xs.forEach((x, i) => { const on = conv[i].spp === selSpp; s += `<circle cx="${X(x)}" cy="${Y(ys[i])}" r="${on ? 6 : 3.5}" fill="${on ? glow : css("--void")}" stroke="${glow}" stroke-width="2"/>`; });
+    s += `<text x="${X(10) - 6}" y="${Y(ty(10)) + 18}" text-anchor="end">1/√N</text>`;
+    svg.innerHTML = s;
+  }
+  $("cv-slider").max = SC.length - 1;
+  $("cv-slider").oninput = (e) => setCv(+e.target.value);
+  setCv(0);
+
+  // =============== inside ===============
+  $("quad").innerHTML = [[D.buffers.normal, "normal", "surface direction"], [D.buffers.albedo, "albedo", "colour without lighting"],
+    [D.buffers.depth, "depth", "distance to camera"], [D.workload.img, "work", `BVH tests per pixel`]]
+    .map(([src, k, v]) => `<figure><img src="${src}" alt="${k} buffer" loading="lazy"><figcaption><b>${k}</b> · ${v}</figcaption></figure>`).join("");
+  function compare(el, a, b, la, lb) {
+    el.innerHTML = `<img src="${a}" alt="${la}"><img class="top" src="${b}" alt="${lb}"><div class="bar"></div>
+      <span class="lab a">${la}</span><span class="lab b">${lb}</span><input type="range" min="0" max="100" value="50" aria-label="Divider between ${la} and ${lb}">`;
+    const set = (v) => el.style.setProperty("--cut", v + "%");
+    el.querySelector("input").oninput = (e) => set(e.target.value); set(50);
+  }
+  compare($("nee-cmp"), D.nee.without.img, D.nee.with.img, "without NEE", "with NEE");
+  $("nee-cap").innerHTML = `16 samples per pixel each. Without NEE: <b>${fmt(D.nee.without.psnr)} dB</b>. With NEE: <b>${fmt(D.nee.with.psnr)} dB</b> PSNR.`;
+
+  // =============== depth ===============
+  $("disp").src = D.stereo.disparity;
+  $("disp-cap").innerHTML = `Left-eye disparity map. The back wall shifts about <b>${fmt(D.stereo.disp_min, 0)} px</b> between the eyes and the nearest sphere about <b>${fmt(D.stereo.disp_max, 0)} px</b>. Brighter pixels are closer and shift more.`;
+
+  // =============== denoiser ===============
+  const sid = dn.showcase_scene;
+  let spp = dn.noisy_spp.includes(4) ? 4 : dn.noisy_spp[0], method = "baseline";
+  const names = { noisy: "noisy input", baseline: "U-Net", stereo: "U-Net + stereo loss", ground_truth: `reference · ${dn.gt_spp} spp` };
+  const pic = (m, s, k = "dn") => `img/${k}_${sid}_spp${s}_${m}.jpg`;
+  function renderDn() {
+    compare($("dn-cmp"), pic("noisy", spp), pic(method, spp), `${spp} spp`, names[method]);
+    $("dn-spp").innerHTML = dn.noisy_spp.map((s) => `<button type="button" aria-pressed="${s === spp}" data-s="${s}">${s} spp input</button>`).join("");
+    $("dn-method").innerHTML = ["baseline", "stereo", "ground_truth"].map((m) => `<button type="button" aria-pressed="${m === method}" data-m="${m}">${names[m]}</button>`).join("");
+    $("dn-spp").querySelectorAll("button").forEach((b) => b.onclick = () => { spp = +b.dataset.s; renderDn(); });
+    $("dn-method").querySelectorAll("button").forEach((b) => b.onclick = () => { method = b.dataset.m; renderDn(); });
+    $("dn-table").innerHTML = `<tr><th>${spp} spp input</th><th>PSNR</th><th>SSIM</th><th>L/R disagree</th></tr>` +
+      ["noisy", "baseline", "stereo"].map((m) => { const r = dn.summary[`${m}@${spp}`];
+        return `<tr class="${m === "noisy" ? "" : "hl"}"><td>${names[m]}</td><td>${fmt(r.psnr, 2)}</td><td>${fmt(r.ssim, 3)}</td><td>${fmt(r.disagreement, 4)}</td></tr>`; }).join("");
+    $("errs").innerHTML = ["noisy", "baseline", "stereo"].map((m) =>
+      `<figure><img src="${pic(m, spp, "err")}" alt="${names[m]} disagreement map" loading="lazy"><figcaption>${names[m]}</figcaption></figure>`).join("");
+  }
+  $("dn-note").textContent = `Averaged over ${dn.test_scenes.length} unseen test scenes at ${dn.res[0]}² per eye. Denoising both eyes takes about ${fmt(dn.summary["baseline@4"].ms, 0)} ms on the M2 GPU. Both models halve the left/right disagreement of the noisy input. At this small training scale the stereo loss is level with the plain U-Net, and the full experiment on the GPU dataset will test whether it pulls ahead.`;
+  renderDn();
+
+  // =============== status ===============
+  const phases = [
+    ["01", "CPU path tracer", "BVH, NEE, Russian roulette, multithreaded", "done"],
+    ["02", "CUDA backend", "kernels written on the shared integrator; compile and CPU-vs-GPU check on an NVIDIA GPU", "gpu"],
+    ["03", "Feature buffers", "normal, albedo, depth, work counters", "done"],
+    ["04", "Stereo rendering", "parallel-axis rig, disparity, anaglyph", "done"],
+    ["05", "Procedural dataset", "stereo scene generator and patch extraction", "done"],
+    ["06", "U-Net denoiser", "trained and evaluated on unseen scenes", "done"],
+    ["07", "Stereo-consistency loss", "implemented and trained; full λ sweep on GPU", "done"],
+    ["08", "C++ render + denoise", "LibTorch output matches Python exactly", "done"],
+    ["09", "90 FPS benchmarks", "frame times and profiling on an NVIDIA GPU", "gpu"],
+  ];
+  $("phases").innerHTML = phases.map(([n, t, s, k]) => `<div class="phase"><span class="n">PHASE ${n}</span><b>${t}</b><span class="s">${s}</span>
+    <span class="chip ${k}">${k === "done" ? "working" : "next · GPU"}</span></div>`).join("");
+  $("foot").textContent = `All images are output of the project's own path tracer, rendered on CPU. Updated ${D.generated}.`;
+})();
+</script>
