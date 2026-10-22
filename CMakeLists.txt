@@ -10,6 +10,14 @@ endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/renderer/cmake/PtCuda.cmake)
 add_subdirectory(renderer)
 
+# Geometry unit tests (ctest). The Python tests are separate:
+#   python -m unittest discover -s tests -v
+option(BUILD_TESTS "Build the C++ unit tests" ON)
+if(BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()
+
 # Phase 8: LibTorch integration. Point CMake at LibTorch with
 #   -DCMAKE_PREFIX_PATH=/path/to/libtorch
 option(BUILD_INTEGRATION "Build the LibTorch render+denoise pipeline" ON)

@@ -66,6 +66,26 @@ You can then use the Python fallback pipeline (section 5, Phase 8). If the Pytho
 scripts cannot find the binaries, set `PATHTRACER_BIN` and `RUN_PIPELINE_BIN` to
 their full paths.
 
+### Tests
+
+Unit tests for the stereo convention: the disparity geometry, the warp, the
+occlusion mask and the patch augmentation. They need no GPU, no dataset and no
+checkpoints, so they run anywhere in about a second.
+
+```bash
+ctest --test-dir build --output-on-failure     # C++ (or: cd build && ctest)
+python -m unittest discover -s tests -v        # Python (pytest tests also works)
+```
+
+`tests/test_stereo_geometry.cpp` checks `d = ipd * focal_px / Z` and
+`x_right = x_left - d` against an independent projection of world points through
+each eye's camera, including a rotated rig and a non-square aspect ratio.
+`tests/test_losses.py` and `tests/test_augmentation.py` check that the warp, the
+visibility mask and the flip augmentation (which swaps the eyes) all follow that
+same convention. The point is that a sign error in any one of them would still
+train to a plausible-looking loss curve, so the convention is pinned down in
+tests rather than only in comments.
+
 ## 3. Running the phases
 
 ```bash
@@ -125,6 +145,7 @@ benchmarks/  cpu_vs_gpu.py, frame_time_bench.py, quality_metrics.py,
              divergence_analysis.py, nsight_profile_runs.sh, make_plots.py
 common/      EXR I/O, paths, image helpers
 scripts/     run_phase.py
+tests/       test_stereo_geometry.cpp (ctest), test_losses.py, test_augmentation.py
 paper/       outline.md
 ```
 
@@ -219,6 +240,7 @@ The code was developed on a Mac without an NVIDIA GPU:
   patches, training and evaluation for both modes, TorchScript export, the C++
   LibTorch pipeline with the CPU backend (its output matched Python inference
   exactly), the Python fallback pipeline, the benchmark scripts on CPU, and the plots.
+  The unit tests in `tests/` also pass there (144 C++ checks, 48 Python tests).
 - **Not compiled or run yet:** the CUDA backend (`renderer/src/pathtrace_kernel.cu`),
   the CUDA code paths of the LibTorch pipeline, and the Nsight script.
 
