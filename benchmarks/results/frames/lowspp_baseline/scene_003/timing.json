@@ -1,0 +1,1 @@
+{"config": "lowspp_baseline", "frames": 10, "render_left_ms": 6.98638, "render_right_ms": 6.84661, "denoise_ms": 19.7643, "readback_ms": 0, "total_ms": 33.6023, "total_p95_ms": 39.8521}

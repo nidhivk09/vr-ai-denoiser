@@ -1,0 +1,1 @@
+{"config": "lowspp_stereo", "frames": 10, "render_left_ms": 6.95393, "render_right_ms": 6.37436, "denoise_ms": 18.9273, "readback_ms": 0, "total_ms": 32.2605, "total_p95_ms": 39.1577}

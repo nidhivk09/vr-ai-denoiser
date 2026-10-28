@@ -1,0 +1,11 @@
+scene,device,backend,width,height,spp,max_depth,block_x,block_y,rng,eye,frame,render_ms
+cornell_glossy,cpu,"cpu (8 threads)",512,512,1,8,16,16,pcg,mono,0,34.8132
+cornell_glossy,cpu,"cpu (8 threads)",512,512,1,8,16,16,pcg,mono,1,34.6626
+cornell_glossy,cpu,"cpu (8 threads)",512,512,1,8,16,16,pcg,mono,2,38.1952
+cornell_glossy,cpu,"cpu (8 threads)",512,512,1,8,16,16,pcg,mono,3,37.247
+cornell_glossy,cpu,"cpu (8 threads)",512,512,1,8,16,16,pcg,mono,4,41.5605
+cornell_glossy,cpu,"cpu (8 threads)",512,512,1,8,16,16,pcg,mono,5,46.6387
+cornell_glossy,cpu,"cpu (8 threads)",512,512,1,8,16,16,pcg,mono,6,59.8736
+cornell_glossy,cpu,"cpu (8 threads)",512,512,1,8,16,16,pcg,mono,7,51.7146
+cornell_glossy,cpu,"cpu (8 threads)",512,512,1,8,16,16,pcg,mono,8,37.1431
+cornell_glossy,cpu,"cpu (8 threads)",512,512,1,8,16,16,pcg,mono,9,34.811
