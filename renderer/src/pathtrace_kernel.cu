@@ -223,14 +223,14 @@ bool cuda_backend_available() {
 
 std::string cuda_device_info() {
     if (!cuda_backend_available()) return "no CUDA device";
-    cudaDeviceProperties props;
+    cudaDeviceProp props;
     cudaGetDeviceProperties(&props, 0);
     return std::string(props.name) + ", compute " + std::to_string(props.major) + "." + std::to_string(props.minor);
 }
 
 double cuda_device_memory_gb() {
     if (!cuda_backend_available()) return 0.0;
-    cudaDeviceProperties props;
+    cudaDeviceProp props;
     cudaGetDeviceProperties(&props, 0);
     return (double)props.totalGlobalMem / (1024.0 * 1024.0 * 1024.0);
 }

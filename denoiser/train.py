@@ -4,6 +4,13 @@
       python -m denoiser.train --mode mono --run-name baseline
   Stereo-consistent (Phase 7):
       python -m denoiser.train --mode stereo --lambda-cons 0.5 --run-name stereo_l0.5
+  Fine-tune a converged model with the consistency term (what the sweep does):
+      python -m denoiser.train --mode stereo --lambda-cons 0.5 --init denoiser/checkpoints/baseline/best.pt \
+          --epochs 40 --lr 5e-5 --run-name sweep_l0.5
+
+--cons-loss picks the consistency term: "error" (default) compares the two
+eyes' errors against ground truth and is zero for a perfect prediction;
+"output" compares the predictions directly (the original form).
 
 Both modes are validated on the same stereo validation patches, reporting
 per-eye reconstruction error (val_l1) and cross-eye consistency (val_cons),
@@ -42,7 +49,10 @@ def pick_device(name: str) -> torch.device:
     return torch.device("cpu")
 
 
-def stereo_losses(model, batch, device, lambda_cons: float, amp_ctx):
+def stereo_losses(model, batch, device, lambda_cons: float, amp_ctx, cons_loss: str = "error"):
+    """Returns (total, l1, cons_output, cons_term). cons_output is always the
+    output-form consistency (comparable across runs and with the evaluation
+    metric); cons_term is the form selected by cons_loss, the one in the total."""
     li = batch["left_input"].to(device, non_blocking=True)
     ri = batch["right_input"].to(device, non_blocking=True)
     lt = batch["left_target"].to(device, non_blocking=True)
@@ -54,15 +64,24 @@ def stereo_losses(model, batch, device, lambda_cons: float, amp_ctx):
     pred = pred.float()
     lp, rp = pred.chunk(2, dim=0)
     l1 = hdr_l1(lp, lt) + hdr_l1(rp, rt)
-    cons = stereo_consistency_loss(lp, rp, ld, rd)
-    total = l1 + lambda_cons * cons if lambda_cons > 0 else l1
-    return total, l1, cons
+    cons_output = stereo_consistency_loss(lp, rp, ld, rd)
+    if cons_loss == "error":
+        cons_term = stereo_consistency_loss(lp, rp, ld, rd, left_target=lt, right_target=rt)
+    else:
+        cons_term = cons_output
+    total = l1 + lambda_cons * cons_term if lambda_cons > 0 else l1
+    return total, l1, cons_output, cons_term
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--mode", choices=["mono", "stereo"], default="mono")
     ap.add_argument("--lambda-cons", type=float, default=0.5, help="consistency weight (stereo mode)")
+    ap.add_argument("--cons-loss", choices=["error", "output"], default="error",
+                    help="consistency term: 'error' = eyes' errors vs ground truth (zero at a perfect "
+                         "prediction), 'output' = predictions compared directly")
+    ap.add_argument("--init", type=Path, default=None,
+                    help="start from this checkpoint's weights (fine-tuning); its model config overrides --base/--levels")
     ap.add_argument("--run-name", default=None)
     ap.add_argument("--patches", type=Path, default=PATCH_DIR)
     ap.add_argument("--epochs", type=int, default=150)
@@ -99,7 +118,14 @@ def main() -> None:
     if len(train_loader) == 0:
         raise SystemExit("not enough training patches for one batch - lower --batch-size")
 
+    init_mtime = None
+    if args.init is not None:
+        init_ckpt = torch.load(args.init, map_location="cpu", weights_only=False)
+        args.base, args.levels = init_ckpt["model_config"]["base"], init_ckpt["model_config"]["levels"]
+        init_mtime = args.init.stat().st_mtime_ns
     model = Denoiser(args.base, args.levels).to(device)
+    if args.init is not None:
+        model.load_state_dict(init_ckpt["model_state"])
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     steps_per_epoch = len(train_loader) if args.max_steps_per_epoch <= 0 else min(len(train_loader), args.max_steps_per_epoch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=args.epochs * steps_per_epoch,
@@ -110,17 +136,26 @@ def main() -> None:
     def amp_ctx():
         return torch.autocast(device_type="cuda", dtype=torch.float16, enabled=use_amp)
 
-    print(f"run '{run}' | mode {args.mode} | lambda {args.lambda_cons} | device {device} | "
+    if args.init is not None:
+        print(f"initialised from {args.init} (epoch {init_ckpt.get('epoch')}, val_l1 {init_ckpt.get('val_l1')})")
+    print(f"run '{run}' | mode {args.mode} | lambda {args.lambda_cons} ({args.cons_loss}) | device {device} | "
           f"{count_parameters(model) / 1e6:.2f}M params")
     print(f"train samples {len(train_set)} ({steps_per_epoch} steps/epoch), val stereo patches {len(val_set)}")
-    (out_dir / "args.json").write_text(json.dumps({**vars(args), "patches": str(args.patches), "run": run}, indent=2))
+    run_args = {**vars(args), "patches": str(args.patches), "init": str(args.init) if args.init else None,
+                "init_mtime": init_mtime, "run": run}
+    (out_dir / "args.json").write_text(json.dumps(run_args, indent=2))
+    (out_dir / "done.json").unlink(missing_ok=True)  # written again only when this run finishes
 
     log_path = out_dir / "log.csv"
-    fields = ["epoch", "train_loss", "train_l1", "train_cons", "val_l1", "val_cons", "val_objective", "lr", "epoch_sec"]
+    # train_cons / val_cons_term: the consistency term being optimised (--cons-loss).
+    # val_cons: always the output form, so curves of different runs are comparable.
+    fields = ["epoch", "train_loss", "train_l1", "train_cons", "val_l1", "val_cons", "val_objective", "lr",
+              "epoch_sec", "val_cons_term"]
     with open(log_path, "w", newline="") as f:
         csv.writer(f).writerow(fields)
 
     best = math.inf
+    best_stats = {}
     stale = 0
     for epoch in range(1, args.epochs + 1):
         model.train()
@@ -139,7 +174,7 @@ def main() -> None:
                 l1 = hdr_l1(pred.float(), y)
                 loss, cons = l1, torch.zeros((), device=device)
             else:
-                loss, l1, cons = stereo_losses(model, batch, device, args.lambda_cons, amp_ctx)
+                loss, l1, _, cons = stereo_losses(model, batch, device, args.lambda_cons, amp_ctx, args.cons_loss)
             scaler.scale(loss).backward()
             scaler.step(opt)
             scaler.update()
@@ -148,17 +183,17 @@ def main() -> None:
             n += 1
 
         model.eval()
-        vsum = np.zeros(2)
+        vsum = np.zeros(3)
         vn = 0
         with torch.no_grad():
             for batch in val_loader:
-                _, l1, cons = stereo_losses(model, batch, device, 0.0, amp_ctx)
-                vsum += [0.5 * l1.item(), cons.item()]  # l1 reported per eye
+                _, l1, cons, cons_term = stereo_losses(model, batch, device, 0.0, amp_ctx, args.cons_loss)
+                vsum += [0.5 * l1.item(), cons.item(), cons_term.item()]  # l1 reported per eye
                 vn += 1
-        val_l1, val_cons = vsum / max(vn, 1)
-        objective = 2.0 * val_l1 + args.lambda_cons * val_cons
+        val_l1, val_cons, val_cons_term = (float(v) for v in vsum / max(vn, 1))
+        objective = 2.0 * val_l1 + args.lambda_cons * val_cons_term  # same form as the training loss
         dt = time.perf_counter() - t0
-        row = [epoch, *(sums / max(n, 1)), val_l1, val_cons, objective, sched.get_last_lr()[0], dt]
+        row = [epoch, *(sums / max(n, 1)), val_l1, val_cons, objective, sched.get_last_lr()[0], dt, val_cons_term]
         with open(log_path, "a", newline="") as f:
             csv.writer(f).writerow([f"{v:.6g}" if isinstance(v, float) else v for v in row])
 
@@ -168,15 +203,21 @@ def main() -> None:
             "epoch": epoch,
             "val_l1": val_l1,
             "val_cons": val_cons,
+            "val_cons_term": val_cons_term,
             "val_objective": objective,
             "mode": args.mode,
             "lambda_cons": args.lambda_cons,
+            "cons_loss": args.cons_loss,
+            "seed": args.seed,
+            "init": str(args.init) if args.init else None,
             "run": run,
         }
         torch.save(ckpt, out_dir / "last.pt")
         improved = objective < best
         if improved:
             best = objective
+            best_stats = {"epoch": epoch, "val_l1": val_l1, "val_cons": val_cons, "val_cons_term": val_cons_term,
+                          "val_objective": objective}
             stale = 0
             torch.save(ckpt, out_dir / "best.pt")
         else:
@@ -187,6 +228,9 @@ def main() -> None:
             print(f"early stop: no improvement for {args.patience} epochs")
             break
 
+    # Marks the run as complete. sweep_lambda.py reuses a checkpoint only if this
+    # file exists and its settings match, so interrupted or outdated runs are redone.
+    (out_dir / "done.json").write_text(json.dumps({"args": run_args, "best": best_stats}, indent=2))
     print(f"best val objective {best:.5f}; checkpoints in {out_dir}")
 
 

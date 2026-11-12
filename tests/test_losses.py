@@ -258,6 +258,55 @@ class ConsistencyLossTest(unittest.TestCase):
         self.assertEqual(losses.stereo_consistency_loss(left, right, dl, dr).shape, ())
 
 
+class ErrorConsistencyLossTest(unittest.TestCase):
+    """The error-referenced form: |e_left - warp(e_right)| with e = pred - target (log space)."""
+
+    @staticmethod
+    def targets(d: float = 8.0):
+        """Ground truth that is *not* stereo-consistent (as with a view-dependent highlight)."""
+        left, right = ramp(x0=0.0), ramp(x0=d) * 1.3
+        return left, right, const(d), const(d)
+
+    def test_zero_for_a_perfect_prediction_even_if_the_truth_disagrees(self):
+        lt, rt, dl, dr = self.targets()
+        self.assertGreater(losses.stereo_consistency_loss(lt, rt, dl, dr).item(), 1e-2)  # output form objects
+        loss = losses.stereo_consistency_loss(lt, rt, dl, dr, left_target=lt, right_target=rt)
+        self.assertLess(loss.item(), TOL)
+
+    def test_equals_the_output_form_when_the_truth_is_consistent(self):
+        lt, rt, dl, dr = ramp(x0=0.0), ramp(x0=8.0), const(8.0), const(8.0)
+        lp, rp = lt * 1.1, rt * 1.4
+        a = losses.stereo_consistency_loss(lp, rp, dl, dr, left_target=lt, right_target=rt).item()
+        b = losses.stereo_consistency_loss(lp, rp, dl, dr).item()
+        self.assertAlmostEqual(a, b, places=4)
+
+    def test_same_error_in_both_eyes_is_not_penalised(self):
+        """A constant log-space offset in both eyes is a shared error: wrong, but consistent."""
+        lt, rt, dl, dr = self.targets()
+        shift = lambda t: torch.expm1(torch.log1p(t) + 0.2)  # noqa: E731
+        loss = losses.stereo_consistency_loss(shift(lt), shift(rt), dl, dr, left_target=lt, right_target=rt)
+        self.assertLess(loss.item(), 1e-4)
+
+    def test_error_in_one_eye_only_is_penalised(self):
+        lt, rt, dl, dr = self.targets()
+        shift = lambda t: torch.expm1(torch.log1p(t) + 0.2)  # noqa: E731
+        loss = losses.stereo_consistency_loss(shift(lt), rt, dl, dr, left_target=lt, right_target=rt)
+        self.assertGreater(loss.item(), 0.1)
+
+    def test_gradients_reach_both_eyes(self):
+        lt, rt, dl, dr = self.targets()
+        lp = (lt * 1.1).requires_grad_(True)
+        rp = (rt * 1.3).requires_grad_(True)
+        losses.stereo_consistency_loss(lp, rp, dl, dr, left_target=lt, right_target=rt).backward()
+        self.assertGreater(lp.grad.abs().sum().item(), 0.0)
+        self.assertGreater(rp.grad.abs().sum().item(), 0.0)
+
+    def test_one_target_alone_is_rejected(self):
+        lt, rt, dl, dr = self.targets()
+        with self.assertRaises(ValueError):
+            losses.stereo_consistency_loss(lt, rt, dl, dr, left_target=lt)
+
+
 class DisagreementMetricTest(unittest.TestCase):
     """stereo_disagreement is the reported headline metric, on display-referred
     images (clamp to [0,1], gamma 2.2)."""

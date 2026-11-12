@@ -65,11 +65,29 @@ def _masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
 def stereo_consistency_loss(left_pred: torch.Tensor, right_pred: torch.Tensor,
                             left_disp: torch.Tensor, right_disp: torch.Tensor,
-                            symmetric: bool = True) -> torch.Tensor:
-    """L1(left_pred, warp(right_pred)) over mutually visible pixels (log space).
-    With symmetric=True the right->left term is added and the two are averaged."""
+                            symmetric: bool = True,
+                            left_target: torch.Tensor | None = None,
+                            right_target: torch.Tensor | None = None) -> torch.Tensor:
+    """L1(left, warp(right)) over mutually visible pixels (log space).
+    With symmetric=True the right->left term is added and the two are averaged.
+
+    Without targets the predictions themselves are compared ("output" form).
+    That also penalises left/right differences the ground truth really has
+    (view-dependent highlights, resampling blur of the warp), so it pulls
+    against the reconstruction loss and can be lowered by blurring.
+
+    With targets the per-eye *errors* (pred - target, log space) are compared
+    ("error" form): |e_left - warp(e_right)|. The warp is linear, so this is
+    the output form minus the ground truth's own disagreement. It is exactly
+    zero for a perfect prediction and only penalises denoising artefacts that
+    differ between the eyes."""
+    if (left_target is None) != (right_target is None):
+        raise ValueError("pass both targets or neither")
     left_mask, right_mask = visibility_masks(left_disp, right_disp)
     lp, rp = log_space(left_pred), log_space(right_pred)
+    if left_target is not None:
+        lp = lp - log_space(left_target)
+        rp = rp - log_space(right_target)
     r_in_l, _ = warp_right_to_left(rp, left_disp)
     loss = _masked_mean((lp - r_in_l).abs(), left_mask)
     if symmetric:

@@ -279,11 +279,16 @@ int run(int argc, char** argv) {
         std::cout << "block   mean ms   std ms   min ms   Msamples/s\n";
         for (int b : parse_int_list(o.bench_blocks)) {
             backend->set_block_size(b, b);
-            for (int i = 0; i < o.warmup; ++i) backend->render(mono, EYE_MONO, i);
             std::vector<double> ms;
-            for (int i = 0; i < o.frames; ++i) {
-                backend->render(mono, EYE_MONO, o.frame + i);
-                ms.push_back(backend->last_render_ms);
+            try {  // block sizes the kernel cannot launch with (e.g. 32x32 = 1024 threads, too many registers) are skipped
+                for (int i = 0; i < o.warmup; ++i) backend->render(mono, EYE_MONO, i);
+                for (int i = 0; i < o.frames; ++i) {
+                    backend->render(mono, EYE_MONO, o.frame + i);
+                    ms.push_back(backend->last_render_ms);
+                }
+            } catch (const std::exception& e) {
+                printf("%2dx%-2d  skipped: %s\n", b, b, e.what());
+                continue;
             }
             Timing t = summarize(ms);
             double mps = samples / (t.mean / 1000.0) / 1e6;

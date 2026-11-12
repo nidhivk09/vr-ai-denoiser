@@ -98,20 +98,34 @@ def phase6(a):
 
 
 def phase7(a):
-    lambdas = "0,1" if a.quick else a.lambdas
-    sh(PY, "-m", "denoiser.sweep_lambda", "--lambdas", lambdas, "--", *_train_args(a))
-    stereo = CHECKPOINT_DIR / f"sweep_l{a.stereo_lambda:g}/best.pt"
-    if not stereo.exists():
-        stereo = CHECKPOINT_DIR / f"sweep_l{lambdas.split(',')[-1]}/best.pt"
+    # Every sweep model is fine-tuned from the Phase 6 baseline; lambda=0 is the control.
+    if a.quick:
+        sweep = ["--lambdas", "0,1", "--seeds", "0", "--finetune-epochs", 2, "--", "--batch-size", 8]
+    else:
+        sweep = ["--lambdas", a.lambdas, "--seeds", a.seeds, "--finetune-epochs", a.finetune_epochs,
+                 "--", "--batch-size", a.batch_size, "--amp"]
+    sh(PY, "-m", "denoiser.sweep_lambda", "--cons-loss", a.cons_loss, *sweep)
+    control = CHECKPOINT_DIR / "sweep_l0/best.pt"
     sh(PY, "-m", "denoiser.evaluate", "--models", f"baseline={CHECKPOINT_DIR / 'baseline/best.pt'}",
-       f"stereo={stereo}", "--out", RESULTS_DIR / "eval")
-    look_at(RESULTS_DIR / "lambda_sweep.csv", RESULTS_DIR / "eval/summary.csv", RESULTS_DIR / "eval/*.png",
-            "(headline: 'stereo' disagreement should be lower than 'baseline')")
+       *([f"control_l0={control}"] if control.exists() else []),
+       f"stereo={_stereo_ckpt(a)}", "--out", RESULTS_DIR / "eval")
+    look_at(RESULTS_DIR / "lambda_sweep.csv", CHECKPOINT_DIR / "sweep_selected.json",
+            RESULTS_DIR / "eval/summary.csv", RESULTS_DIR / "eval/*.png",
+            "(headline: 'stereo' disagreement should be lower than 'control_l0' - same fine-tuning, no",
+            " consistency term - and closer to the 'ground_truth' row, which is the floor)")
 
 
 def _stereo_ckpt(a):
-    p = CHECKPOINT_DIR / f"sweep_l{a.stereo_lambda:g}/best.pt"
-    return p if p.exists() else sorted(CHECKPOINT_DIR.glob("sweep_l*/best.pt"))[-1]
+    """'The' stereo model: --stereo-lambda if given, else the sweep's validation-based pick."""
+    import json
+    if a.stereo_lambda is not None:
+        return CHECKPOINT_DIR / f"sweep_l{a.stereo_lambda:g}/best.pt"
+    selected = CHECKPOINT_DIR / "sweep_selected.json"
+    if selected.exists():
+        lam = json.loads(selected.read_text()).get("lambda")
+        if lam is not None:
+            return CHECKPOINT_DIR / f"sweep_l{lam:g}/best.pt"
+    raise SystemExit("no stereo model selected - run phase 7 first or pass --stereo-lambda")
 
 
 def phase8(a):
@@ -162,10 +176,16 @@ def main() -> None:
     ap.add_argument("--quick", action="store_true", help="small, fast settings for a smoke test")
     ap.add_argument("--scenes", type=int, default=24)
     ap.add_argument("--gt-spp", type=int, default=2048)
-    ap.add_argument("--epochs", type=int, default=150)
+    ap.add_argument("--epochs", type=int, default=300, help="baseline training epochs (phase 6)")
+    ap.add_argument("--finetune-epochs", type=int, default=40, help="epochs per sweep model (phase 7)")
+    ap.add_argument("--seeds", default="0,1,2", help="training seeds per lambda (phase 7)")
+    ap.add_argument("--cons-loss", choices=["error", "output"], default="error",
+                    help="consistency term used in the sweep (see denoiser/train.py)")
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--lambdas", default="0,0.1,0.5,1,2,5")
-    ap.add_argument("--stereo-lambda", type=float, default=1.0, help="which sweep model is 'the' stereo model")
+    ap.add_argument("--stereo-lambda", type=float, default=None,
+                    help="which sweep model is 'the' stereo model (default: the sweep's own pick, "
+                         "denoiser/checkpoints/sweep_selected.json)")
     ap.add_argument("--fp32", action="store_true", help="benchmark FP32 models instead of FP16")
     ap.add_argument("--gpu-bandwidth", type=float, default=0.0,
                     help="GPU memory bandwidth in GB/s from the spec sheet (e.g. RTX 3060 Laptop: 336)")
