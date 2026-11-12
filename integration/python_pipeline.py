@@ -29,7 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.exr import read_exr, write_exr  # noqa: E402
 from common.imageops import anaglyph, save_png, tonemap  # noqa: E402
 from common.paths import find_renderer  # noqa: E402
-from denoiser.model import denoise_full, load_checkpoint  # noqa: E402
+from denoiser.model import denoise_full, load_checkpoint, pair_input  # noqa: E402
 from denoiser.train import pick_device  # noqa: E402
 
 VR_BUDGET_MS = 1000.0 / 90.0
@@ -86,11 +86,13 @@ def main() -> None:
             for eye in ("left", "right"):
                 parts = [read_exr(tmp / "frame" / f"{eye}_{b}.exr") for b in ("color", "normal", "albedo")]
                 eyes[eye] = torch.from_numpy(np.concatenate(parts, -1).transpose(2, 0, 1)).unsqueeze(0)
+            disp = {eye: torch.from_numpy(read_exr(tmp / "frame" / f"{eye}_disparity.exr").transpose(2, 0, 1)).unsqueeze(0)
+                    for eye in ("left", "right")}
 
             denoise_ms = 0.0
             outputs = {e: t[:, :3] for e, t in eyes.items()}
             if model is not None:
-                x = torch.cat([eyes["left"], eyes["right"]], 0).to(device)  # host->device (untimed, see docstring)
+                x = pair_input(model, eyes["left"], eyes["right"], disp["left"], disp["right"]).to(device)  # host->device (untimed, see docstring)
                 _sync(device)
                 t0 = time.perf_counter()
                 y = denoise_full(model, x)

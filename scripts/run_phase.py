@@ -4,6 +4,7 @@
     python scripts/run_phase.py 2 3 4      # several phases
     python scripts/run_phase.py all        # everything, in order
     python scripts/run_phase.py 5 --quick  # small/fast settings (smoke test)
+    python scripts/run_phase.py 7 8 9 --fusion   # cross-eye fusion models (after phases 6-7 without it)
 
 Build the C++ code first (see README). Phases 2, 8 and 9 need an NVIDIA GPU.
 """
@@ -97,7 +98,29 @@ def phase6(a):
             RESULTS_DIR / "eval_baseline/*.png", "(denoised PSNR/SSIM should clearly beat 'noisy')")
 
 
+def phase7_fusion(a):
+    """Cross-eye fusion sweep. Compared against the baseline and, when the
+    plain phase 7 has been run, its control and selected stereo model."""
+    if a.quick:
+        sweep = ["--lambdas", "0,1", "--seeds", "0", "--finetune-epochs", 2, "--", "--batch-size", 8]
+    else:
+        sweep = ["--lambdas", a.lambdas, "--seeds", a.seeds, "--finetune-epochs", a.fusion_epochs,
+                 "--finetune-lr", a.fusion_lr, "--", "--batch-size", a.batch_size, "--amp"]
+    sh(PY, "-m", "denoiser.sweep_lambda", "--fusion", "--cons-loss", a.cons_loss, *sweep)
+    models = {"baseline": CHECKPOINT_DIR / "baseline/best.pt", "control_l0": CHECKPOINT_DIR / "sweep_l0/best.pt",
+              "stereo": _selected("sweep"), "fusion_l0": CHECKPOINT_DIR / "fusion_l0/best.pt",
+              "fusion": _stereo_ckpt(a)}
+    sh(PY, "-m", "denoiser.evaluate", "--models", *(f"{k}={v}" for k, v in models.items() if v and v.exists()),
+       "--out", RESULTS_DIR / "eval_fusion")
+    look_at(RESULTS_DIR / "lambda_sweep_fusion.csv", CHECKPOINT_DIR / "fusion_selected.json",
+            RESULTS_DIR / "eval_fusion/summary.csv", RESULTS_DIR / "eval_fusion/*.png",
+            "(headline: 'fusion_l0' vs 'control_l0' shows what sharing samples between the eyes buys;",
+            " 'fusion' vs 'fusion_l0' shows what the consistency loss adds on top)")
+
+
 def phase7(a):
+    if a.fusion:
+        return phase7_fusion(a)
     # Every sweep model is fine-tuned from the Phase 6 baseline; lambda=0 is the control.
     if a.quick:
         sweep = ["--lambdas", "0,1", "--seeds", "0", "--finetune-epochs", 2, "--", "--batch-size", 8]
@@ -115,17 +138,28 @@ def phase7(a):
             " consistency term - and closer to the 'ground_truth' row, which is the floor)")
 
 
-def _stereo_ckpt(a):
-    """'The' stereo model: --stereo-lambda if given, else the sweep's validation-based pick."""
+def _selected(prefix):
+    """The checkpoint picked by the sweep with this run prefix ('sweep' or 'fusion'), or None."""
     import json
-    if a.stereo_lambda is not None:
-        return CHECKPOINT_DIR / f"sweep_l{a.stereo_lambda:g}/best.pt"
-    selected = CHECKPOINT_DIR / "sweep_selected.json"
+    selected = CHECKPOINT_DIR / f"{prefix}_selected.json"
     if selected.exists():
         lam = json.loads(selected.read_text()).get("lambda")
         if lam is not None:
-            return CHECKPOINT_DIR / f"sweep_l{lam:g}/best.pt"
-    raise SystemExit("no stereo model selected - run phase 7 first or pass --stereo-lambda")
+            return CHECKPOINT_DIR / f"{prefix}_l{lam:g}/best.pt"
+    return None
+
+
+def _stereo_ckpt(a):
+    """'The' stereo model: --stereo-lambda if given, else the sweep's validation-based pick.
+    With --fusion it comes from the fusion sweep."""
+    prefix = "fusion" if a.fusion else "sweep"
+    if a.stereo_lambda is not None:
+        return CHECKPOINT_DIR / f"{prefix}_l{a.stereo_lambda:g}/best.pt"
+    ckpt = _selected(prefix)
+    if ckpt is None:
+        raise SystemExit(f"no stereo model selected - run phase 7{' --fusion' if a.fusion else ''} first "
+                         "or pass --stereo-lambda")
+    return ckpt
 
 
 def phase8(a):
@@ -146,6 +180,14 @@ def phase8(a):
        "--checkpoint", CHECKPOINT_DIR / "baseline/best.pt")
     look_at(OUT / "phase8/left_denoised.png", OUT / "phase8/anaglyph.png", OUT / "phase8/timing.json",
             OUT / "phase8/python_comparison.json")
+    if a.fusion:  # the fusion model takes a different path through the C++ pipeline (depth -> disparity channel)
+        ckpt = _stereo_ckpt(a)
+        sh(find_pipeline(), "--scene", ROOT / test_scene["scene_file"], "--model", ckpt.with_name("best_ts.pt"),
+           "--fusion", "--width", manifest["width"], "--height", manifest["height"], "--spp", 4,
+           "--clamp", manifest["clamp"], "--ipd", manifest["ipd"], "--frames", 30, "--out", OUT / "phase8_fusion")
+        sh(PY, "-m", "integration.compare_with_python", "--pipeline-out", OUT / "phase8_fusion", "--checkpoint", ckpt)
+        look_at(OUT / "phase8_fusion/timing.json", OUT / "phase8_fusion/python_comparison.json",
+                "(denoise_ms here vs phase8/timing.json is the cost of the cross-eye input)")
 
 
 def phase9(a):
@@ -183,6 +225,10 @@ def main() -> None:
                     help="consistency term used in the sweep (see denoiser/train.py)")
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--lambdas", default="0,0.1,0.5,1,2,5")
+    ap.add_argument("--fusion", action="store_true",
+                    help="phases 7-9 with cross-eye fusion models (each eye also sees the other eye's samples)")
+    ap.add_argument("--fusion-epochs", type=int, default=80, help="epochs per fusion sweep model")
+    ap.add_argument("--fusion-lr", type=float, default=1e-4, help="peak learning rate of the fusion fine-tune")
     ap.add_argument("--stereo-lambda", type=float, default=None,
                     help="which sweep model is 'the' stereo model (default: the sweep's own pick, "
                          "denoiser/checkpoints/sweep_selected.json)")

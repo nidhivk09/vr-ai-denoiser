@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.paths import CHECKPOINT_DIR, PATCH_DIR  # noqa: E402
 from denoiser.dataset import PatchDataset  # noqa: E402
 from denoiser.losses import hdr_l1, stereo_consistency_loss  # noqa: E402
-from denoiser.model import Denoiser, count_parameters  # noqa: E402
+from denoiser.model import Denoiser, count_parameters, pair_input  # noqa: E402
 
 
 def pick_device(name: str) -> torch.device:
@@ -60,7 +60,7 @@ def stereo_losses(model, batch, device, lambda_cons: float, amp_ctx, cons_loss: 
     ld = batch["left_disp"].to(device, non_blocking=True)
     rd = batch["right_disp"].to(device, non_blocking=True)
     with amp_ctx():
-        pred = model(torch.cat([li, ri], dim=0))
+        pred = model(pair_input(model, li, ri, ld, rd))
     pred = pred.float()
     lp, rp = pred.chunk(2, dim=0)
     l1 = hdr_l1(lp, lt) + hdr_l1(rp, rt)
@@ -80,6 +80,8 @@ def main() -> None:
     ap.add_argument("--cons-loss", choices=["error", "output"], default="error",
                     help="consistency term: 'error' = eyes' errors vs ground truth (zero at a perfect "
                          "prediction), 'output' = predictions compared directly")
+    ap.add_argument("--fusion", action="store_true",
+                    help="cross-eye fusion: each eye also sees the other eye's reprojected noisy color (stereo mode)")
     ap.add_argument("--init", type=Path, default=None,
                     help="start from this checkpoint's weights (fine-tuning); its model config overrides --base/--levels")
     ap.add_argument("--run-name", default=None)
@@ -100,6 +102,8 @@ def main() -> None:
 
     if args.mode == "mono":
         args.lambda_cons = 0.0
+        if args.fusion:
+            raise SystemExit("--fusion needs stereo pairs: use --mode stereo")
     run = args.run_name or (f"baseline" if args.mode == "mono" else f"stereo_l{args.lambda_cons:g}")
     out_dir = CHECKPOINT_DIR / run
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -123,9 +127,11 @@ def main() -> None:
         init_ckpt = torch.load(args.init, map_location="cpu", weights_only=False)
         args.base, args.levels = init_ckpt["model_config"]["base"], init_ckpt["model_config"]["levels"]
         init_mtime = args.init.stat().st_mtime_ns
-    model = Denoiser(args.base, args.levels).to(device)
+        if init_ckpt["model_config"].get("fusion") and not args.fusion:
+            raise SystemExit(f"{args.init} is a fusion model: pass --fusion")
+    model = Denoiser(args.base, args.levels, args.fusion).to(device)
     if args.init is not None:
-        model.load_state_dict(init_ckpt["model_state"])
+        model.load_weights(init_ckpt["model_state"])  # a non-fusion init starts a fusion model as its exact copy
     opt = torch.optim.Adam(model.parameters(), lr=args.lr)
     steps_per_epoch = len(train_loader) if args.max_steps_per_epoch <= 0 else min(len(train_loader), args.max_steps_per_epoch)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=args.epochs * steps_per_epoch,
@@ -138,7 +144,8 @@ def main() -> None:
 
     if args.init is not None:
         print(f"initialised from {args.init} (epoch {init_ckpt.get('epoch')}, val_l1 {init_ckpt.get('val_l1')})")
-    print(f"run '{run}' | mode {args.mode} | lambda {args.lambda_cons} ({args.cons_loss}) | device {device} | "
+    print(f"run '{run}' | mode {args.mode}{' + fusion' if args.fusion else ''} | lambda {args.lambda_cons} "
+          f"({args.cons_loss}) | device {device} | "
           f"{count_parameters(model) / 1e6:.2f}M params")
     print(f"train samples {len(train_set)} ({steps_per_epoch} steps/epoch), val stereo patches {len(val_set)}")
     run_args = {**vars(args), "patches": str(args.patches), "init": str(args.init) if args.init else None,

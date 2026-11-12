@@ -12,6 +12,13 @@ decayed.
     python -m denoiser.sweep_lambda --from-scratch --epochs 150      # old behaviour
 Extra arguments after `--` are passed to train.py, e.g. `-- --amp --batch-size 32`.
 
+With --fusion the sweep models are cross-eye fusion models (each eye also sees
+the other eye's reprojected noisy color, see denoiser/model.py). They are still
+fine-tuned from the same non-fusion baseline, which they reproduce exactly at
+the start. Their runs are named fusion_l<lambda>/, results go to
+lambda_sweep_fusion.csv and fusion_selected.json, and the non-fusion sweep's
+control and selected model are evaluated alongside when they exist.
+
 Outputs: benchmarks/results/lambda_sweep.csv (one row per model and noise
 level) and denoiser/checkpoints/sweep_selected.json (the lambda chosen on the
 validation split as "the" stereo model). The first seed of each lambda lives
@@ -32,11 +39,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common.paths import CHECKPOINT_DIR, RESULTS_DIR  # noqa: E402
 
-SELECTED = CHECKPOINT_DIR / "sweep_selected.json"
+def run_name(lam: float, seed: int, first_seed: int, prefix: str = "sweep") -> str:
+    return f"{prefix}_l{lam:g}" if seed == first_seed else f"{prefix}_l{lam:g}_s{seed}"
 
 
-def run_name(lam: float, seed: int, first_seed: int) -> str:
-    return f"sweep_l{lam:g}" if seed == first_seed else f"sweep_l{lam:g}_s{seed}"
+def selected_checkpoint(prefix: str = "sweep") -> Path | None:
+    """The checkpoint a finished sweep picked as 'the' stereo model, if any."""
+    path = CHECKPOINT_DIR / f"{prefix}_selected.json"
+    if not path.exists():
+        return None
+    lam = json.loads(path.read_text()).get("lambda")
+    return None if lam is None else CHECKPOINT_DIR / f"{prefix}_l{lam:g}" / "best.pt"
 
 
 def finished_run(run_dir: Path, expected: dict) -> dict | None:
@@ -77,6 +90,7 @@ def main() -> None:
     ap.add_argument("--lambdas", default="0,0.1,0.5,1,2,5")
     ap.add_argument("--seeds", default="0,1,2", help="comma-separated training seeds per lambda")
     ap.add_argument("--cons-loss", choices=["error", "output"], default="error")
+    ap.add_argument("--fusion", action="store_true", help="sweep cross-eye fusion models (runs fusion_l*)")
     ap.add_argument("--init", default=str(CHECKPOINT_DIR / "baseline" / "best.pt"),
                     help="checkpoint every sweep model is fine-tuned from")
     ap.add_argument("--finetune-epochs", type=int, default=40)
@@ -88,9 +102,15 @@ def main() -> None:
     ap.add_argument("--select-l1-tol", type=float, default=0.03,
                     help="max relative val_l1 increase over lambda=0 allowed for the selected stereo model")
     ap.add_argument("--retrain", action="store_true", help="retrain even if a matching finished run exists")
-    ap.add_argument("--out", type=Path, default=RESULTS_DIR / "lambda_sweep")
+    ap.add_argument("--out", type=Path, default=None)
     args, train_extra = ap.parse_known_args()
     train_extra = [a for a in train_extra if a != "--"]
+    prefix = "fusion" if args.fusion else "sweep"
+    suffix = "_fusion" if args.fusion else ""
+    args.out = args.out or RESULTS_DIR / f"lambda_sweep{suffix}"
+    selected_path = CHECKPOINT_DIR / f"{prefix}_selected.json"
+    if args.fusion:
+        train_extra.append("--fusion")
 
     lambdas = [float(x) for x in args.lambdas.split(",")]
     seeds = [int(x) for x in args.seeds.split(",")]
@@ -110,8 +130,10 @@ def main() -> None:
     stats = defaultdict(list)
     for lam in lambdas:
         for seed in seeds:
-            run = run_name(lam, seed, seeds[0])
+            run = run_name(lam, seed, seeds[0], prefix)
             expected = {"mode": "stereo", "lambda_cons": lam, "cons_loss": args.cons_loss, "seed": seed, **schedule}
+            if args.fusion:  # (not checked otherwise, so runs made before --fusion existed stay reusable)
+                expected["fusion"] = True
             done = None if args.retrain else finished_run(CHECKPOINT_DIR / run, expected)
             if done is None:
                 cmd = [sys.executable, "-m", "denoiser.train", "--mode", "stereo", "--lambda-cons", str(lam),
@@ -129,11 +151,16 @@ def main() -> None:
 
     selected = select_lambda(stats, args.select_l1_tol)
     if selected["lambda"] is not None:
-        selected["checkpoint"] = str(CHECKPOINT_DIR / run_name(selected["lambda"], seeds[0], seeds[0]) / "best.pt")
-    selected.update(cons_loss=args.cons_loss, seeds=seeds, from_scratch=args.from_scratch)
-    SELECTED.write_text(json.dumps(selected, indent=2))
-    print(f"selected stereo model: lambda = {selected['lambda']} ({selected['reason']}) -> {SELECTED}")
+        selected["checkpoint"] = str(CHECKPOINT_DIR / run_name(selected["lambda"], seeds[0], seeds[0], prefix) / "best.pt")
+    selected.update(cons_loss=args.cons_loss, seeds=seeds, from_scratch=args.from_scratch, fusion=args.fusion)
+    selected_path.write_text(json.dumps(selected, indent=2))
+    print(f"selected stereo model: lambda = {selected['lambda']} ({selected['reason']}) -> {selected_path}")
 
+    if args.fusion:  # the non-fusion sweep's control and pick, for a direct comparison
+        refs = {"nofusion_l0": CHECKPOINT_DIR / "sweep_l0" / "best.pt", "nofusion_stereo": selected_checkpoint("sweep")}
+        for name, ckpt in reversed(refs.items()):
+            if ckpt is not None and ckpt.exists():
+                models.insert(0, f"{name}={ckpt}")
     if Path(args.baseline).exists():
         models.insert(0, f"baseline={args.baseline}")
     else:
@@ -148,7 +175,7 @@ def main() -> None:
             lam, seed = info.get(r["method"], ("", ""))
             out_rows.append({"method": r["method"], "lambda": lam, "seed": seed, "spp": r["spp"],
                              "psnr": r["psnr"], "ssim": r["ssim"], "disagreement": r["disagreement"]})
-    dest = RESULTS_DIR / "lambda_sweep.csv"
+    dest = RESULTS_DIR / f"lambda_sweep{suffix}.csv"
     with open(dest, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(out_rows[0]))
         w.writeheader()
@@ -159,13 +186,13 @@ def main() -> None:
     floor = {r["spp"]: float(r["disagreement"]) for r in out_rows if r["method"] == "ground_truth"}
     groups = defaultdict(list)
     for r in out_rows:
-        label = f"lambda {r['lambda']:g}" if r["lambda"] != "" else r["method"]
+        label = f"{'fusion ' if args.fusion else ''}lambda {r['lambda']:g}" if r["lambda"] != "" else r["method"]
         groups[(label, int(r["spp"]))].append(r)
-    print(f"\n{'model':>14} {'spp':>4} {'PSNR':>7} {'disagree':>9} {'excess over GT':>15} {'runs':>5}")
+    print(f"\n{'model':>18} {'spp':>4} {'PSNR':>7} {'disagree':>9} {'excess over GT':>15} {'runs':>5}")
     for (label, spp), rows in groups.items():
         psnr = sum(float(r["psnr"]) for r in rows) / len(rows)
         dis = sum(float(r["disagreement"]) for r in rows) / len(rows)
-        print(f"{label:>14} {spp:>4} {psnr:7.2f} {dis:9.5f} {dis - floor.get(str(spp), 0.0):15.5f} {len(rows):>5}")
+        print(f"{label:>18} {spp:>4} {psnr:7.2f} {dis:9.5f} {dis - floor.get(str(spp), 0.0):15.5f} {len(rows):>5}")
 
 
 if __name__ == "__main__":

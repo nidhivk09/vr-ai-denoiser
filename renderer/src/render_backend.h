@@ -45,6 +45,7 @@ public:
     virtual float* color_ptr(int eye) = 0;
     virtual float* normal_ptr(int eye) = 0;
     virtual float* albedo_ptr(int eye) = 0;
+    virtual float* depth_ptr(int eye) = 0;  // planar depth, HW float32 (1 channel)
     virtual bool on_device() const = 0;
 
     virtual void set_params(const RenderParams& p) = 0;

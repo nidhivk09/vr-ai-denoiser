@@ -128,6 +128,29 @@ model for Phases 8-9 is picked on the validation split (lowest left/right disagr
 images themselves disagree slightly between the eyes, so read disagreement against the
 `ground_truth` row, not against zero. Training from scratch per λ is still available:
 `python -m denoiser.sweep_lambda --from-scratch`.
+
+**Cross-eye fusion (experimental, `--fusion`).** In the models above each eye is denoised on
+its own and stereo only enters through the loss. A fusion model also *sees* the other eye:
+inside the network each eye's noisy color is reprojected into the other eye with the
+disparity (`ipd * focal_px / depth`, from the depth buffer the renderer already produces)
+and passed to the U-Net together with a mask of where that reprojection is valid. Where a
+surface is visible in both eyes the network has twice the samples, and both eyes work from
+the same ones. Run it after the normal phases 6-7:
+
+```bash
+python scripts/run_phase.py 7 8 9 --fusion --lambdas 0,0.5,1 --gpu-bandwidth <GB/s>
+```
+
+Fusion models are fine-tuned from the same baseline (which they reproduce exactly at the
+start: the new input weights begin at zero) for `--fusion-epochs` (default 80) at
+`--fusion-lr` (default 1e-4). Runs are named `fusion_l<λ>`; results go to
+`lambda_sweep_fusion.csv`, `eval_fusion/` and `outputs/phase8_fusion/`, and Phase 9 uses the
+selected fusion model as its `lowspp_stereo` configuration (so it overwrites the non-fusion
+Phase 9 results - copy `benchmarks/results/` first if you want both). In
+`eval_fusion/summary.csv`, `fusion_l0` vs `control_l0` is the effect of sharing samples and
+`fusion` vs `fusion_l0` the effect of the consistency loss on top. The exported model takes
+10 input channels (the 10th is disparity) and needs `run_pipeline --fusion`; the benchmark
+adds that flag by itself.
 Training uses a one-cycle learning-rate schedule, so `--epochs` sets the run length
 (add `--patience N` for early stopping). On an 8 GB GPU, keep `--batch-size 16` (the default); raise
 it on bigger GPUs.

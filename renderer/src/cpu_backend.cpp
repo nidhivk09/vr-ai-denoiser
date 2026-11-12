@@ -58,6 +58,7 @@ public:
     float* color_ptr(int eye) override { return slots_[eye_slot(eye)].color.data.data(); }
     float* normal_ptr(int eye) override { return slots_[eye_slot(eye)].normal.data.data(); }
     float* albedo_ptr(int eye) override { return slots_[eye_slot(eye)].albedo.data.data(); }
+    float* depth_ptr(int eye) override { return slots_[eye_slot(eye)].depth.data.data(); }
     bool on_device() const override { return false; }
 
     void set_params(const RenderParams& p) override {

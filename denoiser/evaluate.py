@@ -26,7 +26,7 @@ from common.paths import RAW_DIR, RESULTS_DIR  # noqa: E402
 from dataset import layout  # noqa: E402
 from denoiser.dataset import load_scene_pair, scenes_in_split  # noqa: E402
 from denoiser.losses import visibility_masks, warp_right_to_left  # noqa: E402
-from denoiser.model import denoise_full, load_checkpoint  # noqa: E402
+from denoiser.model import denoise_full, load_checkpoint, pair_input  # noqa: E402
 from denoiser.train import pick_device  # noqa: E402
 
 
@@ -67,9 +67,8 @@ def main() -> None:
         name, path = entry.split("=", 1)
         models[name], _ = load_checkpoint(path, device)
     scenes = scenes_in_split(args.split)
-    warm = torch.zeros(2, 9, manifest["height"], manifest["width"], device=device)
     for model in models.values():  # warm-up so timings exclude kernel selection / allocation
-        denoise_full(model, warm)
+        denoise_full(model, torch.zeros(2, model.in_channels, manifest["height"], manifest["width"], device=device))
     args.out.mkdir(parents=True, exist_ok=True)
     print(f"evaluating {list(models)} on {len(scenes)} {args.split} scenes, spp {spps}, device {device}")
 
@@ -82,7 +81,7 @@ def main() -> None:
             for name, model in models.items():
                 _sync(device)
                 t0 = time.perf_counter()
-                pred = denoise_full(model, torch.cat([s["left_input"], s["right_input"]], dim=0))
+                pred = denoise_full(model, pair_input(model, s["left_input"], s["right_input"], ld, rd))
                 _sync(device)
                 outputs[name] = (pred[0:1], pred[1:2], (time.perf_counter() - t0) * 1000.0)
             outputs["ground_truth"] = (gl, gr, 0.0)

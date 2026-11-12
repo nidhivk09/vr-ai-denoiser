@@ -178,6 +178,7 @@ public:
     float* color_ptr(int eye) override { return slots_[eye_slot(eye)].color; }
     float* normal_ptr(int eye) override { return slots_[eye_slot(eye)].normal; }
     float* albedo_ptr(int eye) override { return slots_[eye_slot(eye)].albedo; }
+    float* depth_ptr(int eye) override { return slots_[eye_slot(eye)].depth; }
     bool on_device() const override { return true; }
 
     void set_params(const RenderParams& p) override {
