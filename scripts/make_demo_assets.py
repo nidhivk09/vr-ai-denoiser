@@ -6,6 +6,7 @@ demo_baseline / demo_stereo checkpoints. Writes JPEGs to outputs/demo/site/img
 and all metrics to outputs/demo/site/data.json.
 
     python scripts/make_demo_assets.py
+    python scripts/make_demo_assets.py --pages-only   # after editing the template or the GPU summary
 """
 from __future__ import annotations
 
@@ -237,6 +238,27 @@ def pipeline_section(data: dict) -> None:
     }
 
 
+def gpu_section(data: dict) -> None:
+    """Measured NVIDIA results (benchmarks/results_gpu/summary.json + img/), if present.
+    The summary is a compact extract of a full GPU run of phases 2 and 6-9."""
+    src = ROOT / "benchmarks/results_gpu"
+    if not (src / "summary.json").exists():
+        data.pop("gpu", None)
+        return
+    g = json.loads((src / "summary.json").read_text())
+
+    def img(name: str) -> str:
+        IMG.mkdir(parents=True, exist_ok=True)
+        (IMG / f"gpu_{name}").write_bytes((src / "img" / name).read_bytes())
+        return f"img/gpu_{name}"
+
+    for scene in g["scenes"]:
+        scene["img"] = {k: img(v) for k, v in scene["img"].items()}
+    for d in g["diff"]:
+        d["img"] = img(d["img"])
+    data["gpu"] = g
+
+
 def write_pages(data: dict) -> None:
     """index.html is a standalone page for offline use; artifact.html is the same body without the skeleton."""
     body = (ROOT / "scripts/demo_template.html").read_text()
@@ -248,8 +270,17 @@ def write_pages(data: dict) -> None:
 
 
 def main() -> None:
-    data: dict = {"generated": time.strftime("%d %b %Y")}
-    for section in (path_tracer_section, rendering_section, stereo_views_section, stereo_section, dataset_section, denoiser_section, pipeline_section):
+    # --pages-only: reuse the numbers and images of the last full build (data.json) and only
+    # refresh the GPU results and the HTML. Use it after editing the template.
+    if "--pages-only" in sys.argv[1:]:
+        data = json.loads((SITE / "data.json").read_text())
+        data["generated"] = time.strftime("%d %b %Y")
+        sections = (gpu_section,)
+    else:
+        data = {"generated": time.strftime("%d %b %Y")}
+        sections = (path_tracer_section, rendering_section, stereo_views_section, stereo_section, dataset_section,
+                    denoiser_section, pipeline_section, gpu_section)
+    for section in sections:
         section(data)
         print(f"done: {section.__name__}", flush=True)
     (SITE / "data.json").write_text(json.dumps(data, indent=1))

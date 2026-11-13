@@ -350,6 +350,49 @@ class DisagreementMetricTest(unittest.TestCase):
         self.assertFalse(out.requires_grad)
 
 
+class DisagreementSplitTest(unittest.TestCase):
+    """stereo_disagreement_split: matched = the reference pair agrees there."""
+
+    @staticmethod
+    def pair(d: float = 8.0):
+        ref_l, ref_r = ramp(x0=0.0), ramp(x0=d)
+        return ref_l, ref_r, const(d), const(d)
+
+    def test_consistent_reference_has_no_unmatched_pixels(self):
+        ref_l, ref_r, dl, dr = self.pair()
+        out = losses.stereo_disagreement_split(ref_l, ref_r, ref_l, ref_r, dl, dr)
+        self.assertEqual(out["unmatched_share"], 0.0)
+        self.assertLess(out["matched"], 1e-4)
+
+    def test_reference_highlight_in_one_eye_is_unmatched(self):
+        ref_l, ref_r, dl, dr = self.pair()
+        ref_l = ref_l.clone()
+        ref_l[..., 4:10, 12:20] += 0.5          # a highlight only the left eye sees
+        out = losses.stereo_disagreement_split(ref_l, ref_r, ref_l, ref_r, dl, dr)
+        self.assertGreater(out["unmatched_share"], 0.0)
+        self.assertLess(out["unmatched_share"], 0.5)
+        self.assertGreater(out["unmatched"], 0.05)  # the pair really differs there ...
+        self.assertLess(out["matched"], 1e-3)       # ... and nowhere else
+
+    def test_denoising_error_on_a_diffuse_region_counts_as_matched(self):
+        ref_l, ref_r, dl, dr = self.pair()
+        pred_l = ref_l.clone()
+        pred_l[..., 20:28, 30:40] += 0.3         # an artefact in one eye, reference is fine
+        out = losses.stereo_disagreement_split(pred_l, ref_r, ref_l, ref_r, dl, dr)
+        self.assertEqual(out["unmatched_share"], 0.0)
+        self.assertGreater(out["matched"], 1e-3)
+
+    def test_matched_and_unmatched_recombine_to_the_total(self):
+        ref_l, ref_r, dl, dr = self.pair()
+        ref_l = ref_l.clone()
+        ref_l[..., 4:10, 12:20] += 0.5
+        pred_l, pred_r = ref_l * 1.1, ref_r * 0.9
+        out = losses.stereo_disagreement_split(pred_l, pred_r, ref_l, ref_r, dl, dr)
+        total = losses.stereo_disagreement(pred_l, pred_r, dl, dr).item()
+        s = out["unmatched_share"]
+        self.assertAlmostEqual((1 - s) * out["matched"] + s * out["unmatched"], total, places=5)
+
+
 class LogSpaceTest(unittest.TestCase):
     def test_negatives_are_clamped_before_the_log(self):
         x = torch.tensor([-1.0, -1e-6, 0.0, math.e - 1.0])

@@ -5,7 +5,9 @@ All metrics are computed on display-referred images (linear HDR clamped to
 
   PSNR, SSIM          - against the high-spp ground truth
   LPIPS               - optional (pip install lpips)
-  stereo disagreement - mean |left - warp(right)| over mutually visible pixels
+  stereo disagreement - mean |left - warp(right)| over mutually visible pixels,
+                        also split into pixels where the reference pair agrees
+                        (dis_matched) and where it differs (dis_unmatched)
 
 CLI: compare rendered/denoised stereo outputs against a ground-truth render:
     python -m benchmarks.quality_metrics --pred outputs/pipeline --gt dataset/raw/scene_000/gt
@@ -23,7 +25,7 @@ import torch.nn.functional as F
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common.exr import read_exr  # noqa: E402
-from denoiser.losses import stereo_disagreement  # noqa: E402
+from denoiser.losses import stereo_disagreement, stereo_disagreement_split  # noqa: E402
 
 
 def display(x: torch.Tensor) -> torch.Tensor:
@@ -85,6 +87,12 @@ def stereo_metrics(left: torch.Tensor, right: torch.Tensor, gt_left: torch.Tenso
         "ssim": 0.5 * (ssim(left, gt_left) + ssim(right, gt_right)),
         "disagreement": stereo_disagreement(left, right, left_disp, right_disp).mean().item(),
     }
+    # Where the reference pair agrees (diffuse surfaces) vs. where it legitimately differs
+    # (view-dependent shading, silhouettes); see stereo_disagreement_split.
+    split = stereo_disagreement_split(left, right, gt_left, gt_right, left_disp, right_disp)
+    out["dis_matched"] = split["matched"]
+    out["dis_unmatched"] = split["unmatched"]
+    out["unmatched_share"] = split["unmatched_share"]
     if with_lpips:
         a, b = lpips_distance(left, gt_left), lpips_distance(right, gt_right)
         out["lpips"] = None if a is None else 0.5 * (a + b)

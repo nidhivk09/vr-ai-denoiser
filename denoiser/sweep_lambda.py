@@ -19,6 +19,13 @@ the start. Their runs are named fusion_l<lambda>/, results go to
 lambda_sweep_fusion.csv and fusion_selected.json, and the non-fusion sweep's
 control and selected model are evaluated alongside when they exist.
 
+--prefix NAME keeps a variant of the sweep apart from the default one: runs are
+named NAME_l<lambda>/, results go to lambda_sweep_NAME.csv and NAME_selected.json,
+and the default sweep's control and selected model are evaluated alongside. Use
+it for the output-form loss or a different fine-tuning budget, e.g.
+    python -m denoiser.sweep_lambda --prefix outloss --cons-loss output --lambdas 0.1,0.5,1,2
+    python -m denoiser.sweep_lambda --prefix long --finetune-epochs 80 --finetune-lr 1e-4 --lambdas 0,1,2
+
 Outputs: benchmarks/results/lambda_sweep.csv (one row per model and noise
 level) and denoiser/checkpoints/sweep_selected.json (the lambda chosen on the
 validation split as "the" stereo model). The first seed of each lambda lives
@@ -91,6 +98,8 @@ def main() -> None:
     ap.add_argument("--seeds", default="0,1,2", help="comma-separated training seeds per lambda")
     ap.add_argument("--cons-loss", choices=["error", "output"], default="error")
     ap.add_argument("--fusion", action="store_true", help="sweep cross-eye fusion models (runs fusion_l*)")
+    ap.add_argument("--prefix", default=None,
+                    help="run-name prefix for a sweep variant (default: 'sweep', or 'fusion' with --fusion)")
     ap.add_argument("--init", default=str(CHECKPOINT_DIR / "baseline" / "best.pt"),
                     help="checkpoint every sweep model is fine-tuned from")
     ap.add_argument("--finetune-epochs", type=int, default=40)
@@ -105,8 +114,10 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=None)
     args, train_extra = ap.parse_known_args()
     train_extra = [a for a in train_extra if a != "--"]
-    prefix = "fusion" if args.fusion else "sweep"
-    suffix = "_fusion" if args.fusion else ""
+    prefix = args.prefix or ("fusion" if args.fusion else "sweep")
+    if not prefix.replace("_", "").isalnum() or prefix.endswith("_l"):
+        raise SystemExit("--prefix must be letters, digits and underscores")
+    suffix = "" if prefix == "sweep" else f"_{prefix}"
     args.out = args.out or RESULTS_DIR / f"lambda_sweep{suffix}"
     selected_path = CHECKPOINT_DIR / f"{prefix}_selected.json"
     if args.fusion:
@@ -156,8 +167,9 @@ def main() -> None:
     selected_path.write_text(json.dumps(selected, indent=2))
     print(f"selected stereo model: lambda = {selected['lambda']} ({selected['reason']}) -> {selected_path}")
 
-    if args.fusion:  # the non-fusion sweep's control and pick, for a direct comparison
-        refs = {"nofusion_l0": CHECKPOINT_DIR / "sweep_l0" / "best.pt", "nofusion_stereo": selected_checkpoint("sweep")}
+    if prefix != "sweep":  # the default sweep's control and pick, for a direct comparison
+        names = ("nofusion_l0", "nofusion_stereo") if args.fusion else ("default_l0", "default_stereo")
+        refs = {names[0]: CHECKPOINT_DIR / "sweep_l0" / "best.pt", names[1]: selected_checkpoint("sweep")}
         for name, ckpt in reversed(refs.items()):
             if ckpt is not None and ckpt.exists():
                 models.insert(0, f"{name}={ckpt}")
@@ -174,7 +186,8 @@ def main() -> None:
         for r in csv.DictReader(f):
             lam, seed = info.get(r["method"], ("", ""))
             out_rows.append({"method": r["method"], "lambda": lam, "seed": seed, "spp": r["spp"],
-                             "psnr": r["psnr"], "ssim": r["ssim"], "disagreement": r["disagreement"]})
+                             "psnr": r["psnr"], "ssim": r["ssim"], "disagreement": r["disagreement"],
+                             "dis_matched": r.get("dis_matched", ""), "dis_unmatched": r.get("dis_unmatched", "")})
     dest = RESULTS_DIR / f"lambda_sweep{suffix}.csv"
     with open(dest, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(out_rows[0]))
@@ -186,7 +199,7 @@ def main() -> None:
     floor = {r["spp"]: float(r["disagreement"]) for r in out_rows if r["method"] == "ground_truth"}
     groups = defaultdict(list)
     for r in out_rows:
-        label = f"{'fusion ' if args.fusion else ''}lambda {r['lambda']:g}" if r["lambda"] != "" else r["method"]
+        label = f"{'' if prefix == 'sweep' else prefix + ' '}lambda {r['lambda']:g}" if r["lambda"] != "" else r["method"]
         groups[(label, int(r["spp"]))].append(r)
     print(f"\n{'model':>18} {'spp':>4} {'PSNR':>7} {'disagree':>9} {'excess over GT':>15} {'runs':>5}")
     for (label, spp), rows in groups.items():
