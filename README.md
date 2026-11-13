@@ -107,13 +107,50 @@ sheet. It is only used to express the memory-throughput estimate as a percentage
 | 3 | color / normal / albedo / depth buffers | `outputs/phase3/*.png` | <1 min |
 | 4 | stereo render, anaglyph, disparity | `outputs/phase4/anaglyph.png` | <1 min |
 | 5 | 24 scenes x (spp 1, 4, 8 + 2048 GT) x 2 eyes, 512², patches | `dataset/patches/stats.json`, `spotcheck.png` | 30-90 min |
-| 6 | baseline U-Net training + test evaluation | `benchmarks/results/eval_baseline/` | 1-3 h |
-| 7 | λ sweep (0, 0.1, 0.5, 1, 2, 5) + baseline vs. stereo evaluation | `benchmarks/results/lambda_sweep.csv`, `eval/` | 4-12 h |
+| 6 | baseline U-Net training (300 epochs) + test evaluation | `benchmarks/results/eval_baseline/` | 2-6 h |
+| 7 | λ sweep (0, 0.1, 0.5, 1, 2, 5) x 3 seeds, each fine-tuned from the baseline + baseline vs. control vs. stereo evaluation | `benchmarks/results/lambda_sweep.csv`, `denoiser/checkpoints/sweep_selected.json`, `eval/` | 2-6 h |
 | 8 | TorchScript export, C++ pipeline, C++ vs Python check | `outputs/phase8/` | 5 min |
 | 9 | frame-time/quality bench, divergence, Nsight, plots | `benchmarks/results/figures/` | 30 min |
 
 \*These are guesses for a mid-range laptop GPU. Phases 6 and 7 dominate the total. To
-shorten them, use fewer epochs (`--epochs 60`) or a shorter sweep (`--lambdas 0,0.5,1,2`).
+shorten them, use fewer epochs (`--epochs 150`), fewer seeds (`--seeds 0`) or a shorter sweep
+(`--lambdas 0,0.5,1,2`).
+
+**How the λ sweep is set up.** Every sweep model starts from the Phase 6 baseline and is
+fine-tuned on paired stereo patches for `--finetune-epochs` (default 40); the models differ
+only in λ and the seed. λ=0 is the control (same fine-tuning, no consistency term), so
+"stereo vs. control" isolates the consistency loss. The loss compares the two eyes' *errors*
+against ground truth (`--cons-loss error`), which is zero for a perfect prediction; the
+original form that compares the predictions directly is `--cons-loss output`. "The" stereo
+model for Phases 8-9 is picked on the validation split (lowest left/right disagreement among
+λ>0 whose per-eye L1 stays within 3% of the control) and recorded in
+`denoiser/checkpoints/sweep_selected.json`; override it with `--stereo-lambda`. The ground-truth
+images themselves disagree slightly between the eyes, so read disagreement against the
+`ground_truth` row, not against zero. Training from scratch per λ is still available:
+`python -m denoiser.sweep_lambda --from-scratch`.
+
+**Cross-eye fusion (experimental, `--fusion`).** In the models above each eye is denoised on
+its own and stereo only enters through the loss. A fusion model also *sees* the other eye:
+inside the network each eye's noisy color is reprojected into the other eye with the
+disparity (`ipd * focal_px / depth`, from the depth buffer the renderer already produces)
+and passed to the U-Net together with a mask of where that reprojection is valid. Where a
+surface is visible in both eyes the network has twice the samples, and both eyes work from
+the same ones. Run it after the normal phases 6-7:
+
+```bash
+python scripts/run_phase.py 7 8 9 --fusion --lambdas 0,0.5,1 --gpu-bandwidth <GB/s>
+```
+
+Fusion models are fine-tuned from the same baseline (which they reproduce exactly at the
+start: the new input weights begin at zero) for `--fusion-epochs` (default 80) at
+`--fusion-lr` (default 1e-4). Runs are named `fusion_l<λ>`; results go to
+`lambda_sweep_fusion.csv`, `eval_fusion/` and `outputs/phase8_fusion/`, and Phase 9 uses the
+selected fusion model as its `lowspp_stereo` configuration (so it overwrites the non-fusion
+Phase 9 results - copy `benchmarks/results/` first if you want both). In
+`eval_fusion/summary.csv`, `fusion_l0` vs `control_l0` is the effect of sharing samples and
+`fusion` vs `fusion_l0` the effect of the consistency loss on top. The exported model takes
+10 input channels (the 10th is disparity) and needs `run_pipeline --fusion`; the benchmark
+adds that flag by itself.
 Training uses a one-cycle learning-rate schedule, so `--epochs` sets the run length
 (add `--patience N` for early stopping). On an 8 GB GPU, keep `--batch-size 16` (the default); raise
 it on bigger GPUs.
@@ -166,9 +203,11 @@ pathtracer --stats --spp 1 --out outputs/stats     # per-pixel work counters
 
 # training / evaluation
 python -m denoiser.train --mode mono --run-name baseline --amp
-python -m denoiser.train --mode stereo --lambda-cons 1.0 --run-name stereo_l1 --amp
+python -m denoiser.train --mode stereo --lambda-cons 0.5 --run-name stereo_l0.5 --amp \
+    --init denoiser/checkpoints/baseline/best.pt --epochs 40 --lr 5e-5
+python -m denoiser.sweep_lambda --lambdas 0,0.5,1 --seeds 0,1,2 -- --amp
 python -m denoiser.evaluate --models baseline=denoiser/checkpoints/baseline/best.pt \
-                                     stereo=denoiser/checkpoints/sweep_l1/best.pt
+                                     stereo=denoiser/checkpoints/sweep_l0.5/best.pt
 
 # pipeline
 python -m denoiser.export_model --checkpoint denoiser/checkpoints/baseline/best.pt --device cuda
@@ -179,7 +218,7 @@ python -m integration.python_pipeline --scene dataset/scenes/scene_003.scene \
     --checkpoint denoiser/checkpoints/baseline/best.pt --spp 4
 python -m benchmarks.frame_time_bench --python \
     --baseline-model denoiser/checkpoints/baseline/best.pt \
-    --stereo-model denoiser/checkpoints/sweep_l1/best.pt
+    --stereo-model denoiser/checkpoints/sweep_l0.5/best.pt
 
 # profiling
 bash benchmarks/nsight_profile_runs.sh denoiser/checkpoints/baseline/best_ts.pt

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -173,12 +174,18 @@ def plot_lambda_sweep(res: Path, out: Path) -> None:
             agg[lam][k].append(float(r[k]))
     lams = sorted(agg)
     baseline = [r for r in read_csv(res / "lambda_sweep.csv") if r["method"] == "baseline"]
+    floor = [r for r in read_csv(res / "lambda_sweep.csv") if r["method"] == "ground_truth"]
     # Two panels sharing the x axis instead of one dual-axis chart.
     fig, axes = plt.subplots(1, 2, figsize=(9, 3.6))
     for ax, key, title in [(axes[0], "psnr", "Per-eye quality: PSNR (dB)"),
                            (axes[1], "disagreement", "Stereo disagreement")]:
         ys = [mean(agg[l][key]) for l in lams]
         ax.plot(lams, ys, marker="o", color=SERIES[0], label="stereo-trained")
+        if key == "disagreement" and floor:  # the reference images' own left/right difference
+            g = mean(r[key] for r in floor)
+            ax.axhline(g, color=INK_2, linestyle=":", linewidth=1.2)
+            ax.annotate("ground truth (floor)", (lams[0], g), xytext=(0, 4), textcoords="offset points",
+                        ha="left", fontsize=8, color=INK_2)
         if baseline:
             b = mean(r[key] for r in baseline)
             ax.axhline(b, color=INK_2, linestyle="--", linewidth=1.2)
@@ -281,6 +288,7 @@ def plot_stage_share(res: Path, out: Path) -> None:
 def plot_training_curves(out: Path) -> None:
     runs = sorted(p.parent for p in CHECKPOINT_DIR.glob("*/log.csv"))
     runs = [r for r in runs if not r.name.startswith("smoke")]
+    runs = [r for r in runs if not re.search(r"_s\d+$", r.name)]  # extra sweep seeds would crowd the plot
     if not runs:
         print("  skip: no training logs")
         return

@@ -18,6 +18,7 @@ struct EyeBuffers {
     float* normal;
     float* albedo;
     float* output;  // receives the denoised color
+    float* depth = nullptr;  // planar depth, HW (1 channel); only read for fusion models
 };
 
 class NeuralDenoiser {
@@ -30,6 +31,12 @@ public:
     // the buffers are CUDA memory (true) or host memory (false). Blocks until done.
     void denoise(const std::vector<EyeBuffers>& eyes, int width, int height, bool on_device);
 
+    // Cross-eye fusion models (exported from a Denoiser(fusion=True)) take a 10th
+    // input channel, the disparity in pixels = ipd * focal_px / depth, and need
+    // the eyes ordered {left, right}. Call once with ipd * focal_px to enable.
+    void enable_fusion(float ipd_times_focal_px) { disparity_scale_ = ipd_times_focal_px; }
+    bool fusion() const { return disparity_scale_ > 0.0f; }
+
     bool on_cuda() const { return device_.is_cuda(); }
     double last_ms = 0.0;
 
@@ -38,6 +45,7 @@ private:
     torch::Device device_;
     bool half_;
     int pad_multiple_;
+    float disparity_scale_ = 0.0f;  // > 0: fusion model
 };
 
 }  // namespace pt

@@ -213,13 +213,81 @@ tr.grp td { border-top: 1px solid var(--dim); }
   .hud { grid-template-columns: auto minmax(0, 1fr); }
   .hud .spp:last-child { display: none; }
 }
+
+/* ---------- GPU results ---------- */
+:root {
+  --c1: #e8525f;          /* chart: left-eye render (validated step of the left-eye red) */
+  --c2: #1fa3ad;          /* chart: right-eye render */
+  --c3: #8f7fe0;          /* chart: denoiser */
+  --s1: #c98500;          /* chart series: single-view network */
+  --s2: #1fa3ad;          /* chart series: cross-eye fusion */
+}
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.tile { background: var(--shell); border: 1px solid var(--rim); border-radius: 14px; padding: 18px 18px 16px; display: grid; gap: 6px; align-content: start; }
+.tile .k { font: 500 11px var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+.tile b { font: 900 clamp(28px, 3.4vw, 42px) var(--display); font-stretch: 120%; line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--glow); }
+.tile b small { font: 600 0.42em var(--body); color: var(--text); letter-spacing: 0; margin-left: 4px; }
+.tile span { font-size: 13.5px; color: var(--dim); }
+.tile span i { font-style: normal; color: var(--text); }
+
+.budget { display: grid; gap: 14px; }
+.brow { display: grid; grid-template-columns: minmax(120px, 190px) minmax(0, 1fr) 92px; gap: 14px; align-items: center; }
+.brow .name { font-size: 14px; } .brow .name span { display: block; font: 11px var(--mono); color: var(--dim); }
+.brow .val { font: 500 14px var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.brow .val span { display: block; font-size: 11px; color: var(--dim); }
+.track { position: relative; height: 26px; display: flex; gap: 2px; }
+.track .seg { height: 100%; min-width: 3px; cursor: default; }
+.track .seg:last-of-type { border-radius: 0 4px 4px 0; }
+.track .seg:hover, .track .seg:focus-visible { filter: brightness(1.25); outline: none; }
+.baxis { position: relative; height: 34px; margin-top: -6px; }
+.baxis i { position: absolute; top: 0; height: 6px; border-left: 1px solid var(--rim); }
+.baxis span { position: absolute; top: 9px; transform: translateX(-50%); font: 11px var(--mono); color: var(--dim); }
+.bplot { position: relative; display: grid; gap: 14px; padding-top: 22px; }
+.bline { position: absolute; top: 18px; bottom: 26px; border-left: 2px dashed var(--glow); pointer-events: none; }
+.bline span { position: absolute; top: -18px; left: 0; transform: translateX(-50%); white-space: nowrap; font: 500 11px var(--mono); color: var(--glow); }
+.key { display: flex; gap: 16px; flex-wrap: wrap; font: 12px var(--mono); color: var(--dim); }
+.key i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.offscale { font-size: 13px; color: var(--dim); border-left: 2px solid var(--rim); padding-left: 12px; }
+.offscale b { color: var(--text); font-weight: 600; }
+
+.gallery { display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr); gap: 36px; align-items: start; }
+.gread { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--rim); border: 1px solid var(--rim); border-radius: 12px; overflow: hidden; }
+.gread div { background: var(--void); padding: 12px 14px; }
+.gread span { display: block; font: 11px var(--mono); color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; }
+.gread b { font: 800 22px var(--display); font-stretch: 112%; font-variant-numeric: tabular-nums; }
+.gread em { display: block; font: 12px var(--mono); font-style: normal; color: var(--dim); }
+.errs5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+.errs5 figure { margin: 0; } .errs5 img { border-radius: 8px; width: 100%; }
+.errs5 figcaption { font: 12px var(--mono); color: var(--dim); margin-top: 6px; } .errs5 figcaption b { display: block; color: var(--text); font-weight: 500; }
+.shift { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 14px; align-items: center; }
+.shift .box { border: 1px solid var(--rim); border-radius: 12px; padding: 14px 16px; }
+.shift .box.now { border-color: var(--glow); }
+.shift .box span { display: block; font: 11px var(--mono); color: var(--dim); letter-spacing: 0.1em; text-transform: uppercase; }
+.shift .box b { font: 800 26px var(--display); font-stretch: 112%; font-variant-numeric: tabular-nums; }
+.shift .box em { display: block; font: 12.5px var(--mono); font-style: normal; color: var(--dim); }
+.shift .arrow { font: 500 20px var(--mono); color: var(--dim); }
+#tip { position: fixed; z-index: 20; pointer-events: none; background: #181b23; border: 1px solid #343946; border-radius: 8px; padding: 8px 10px;
+  font: 12px/1.45 var(--mono); color: var(--text); max-width: 260px; opacity: 0; transition: opacity 0.08s; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+#tip.on { opacity: 1; } #tip b { display: block; font-weight: 500; color: var(--glow); margin-bottom: 2px; } #tip span { color: var(--dim); }
+.pt { cursor: default; } .pt:focus-visible { outline: none; }
+.findings.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@media (max-width: 860px) {
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gallery { grid-template-columns: minmax(0, 1fr); gap: 22px; }
+  .errs5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .brow { grid-template-columns: minmax(0, 1fr) 84px; } .brow .track { grid-column: 1 / -1; grid-row: 2; }
+  .brow .name { grid-row: 1; } .brow .val { grid-row: 1; }
+  .bline, .baxis { display: none; }
+  .shift { grid-template-columns: minmax(0, 1fr); } .shift .arrow { justify-self: center; transform: rotate(90deg); }
+  .findings.four { grid-template-columns: minmax(0, 1fr); }
+}
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 
 <div class="wrap">
   <div class="top">
     <div class="mark"><span class="dots"><i></i><i></i></span>Stereo path tracer</div>
-    <nav><a href="#trace">How it works</a><a href="#eyes">Two eyes</a><a href="#noise">Noise</a><a href="#inside">Buffers</a><a href="#depth">Disparity</a><a href="#denoise">Denoiser</a><a href="#status">Progress</a><a href="#render-results">Results</a></nav>
+    <nav><a href="#trace">How it works</a><a href="#eyes">Two eyes</a><a href="#noise">Noise</a><a href="#inside">Buffers</a><a href="#depth">Disparity</a><a href="#denoise">Denoiser</a><a href="#gpu">GPU results</a><a href="#status">Progress</a></nav>
   </div>
 
   <header class="hero">
@@ -402,12 +470,79 @@ tr.grp td { border-top: 1px solid var(--dim); }
     </div>
   </section>
 
+  <!-- GPU results -->
+  <section id="gpu">
+    <div class="head">
+      <span class="tag" id="g-tag">Measured on an NVIDIA GPU</span>
+      <h2>Real time, <span class="l">both</span> <span class="r">eyes</span>, measured</h2>
+      <p class="dim">The same renderer and denoiser, compiled for CUDA and run end to end in C++ on a desktop GPU. Every number below is a measurement on four scenes the networks never saw during training.</p>
+    </div>
+    <div class="tiles" id="g-tiles"></div>
+
+    <div class="panel" style="display:grid;gap:18px">
+      <h3>Where one stereo frame's time goes</h3>
+      <div class="bplot" id="g-budget"></div>
+      <div class="key"><span><i style="background:var(--c1)"></i>path trace, left eye</span><span><i style="background:var(--c2)"></i>path trace, right eye</span><span><i style="background:var(--c3)"></i>denoise both eyes</span></div>
+      <p class="offscale" id="g-offscale"></p>
+    </div>
+
+    <div class="gallery">
+      <div style="display:grid;gap:12px">
+        <div class="cmp" id="g-cmp"></div>
+        <div class="row" id="g-scene" role="group" aria-label="Test scene"></div>
+        <div class="row" id="g-method" role="group" aria-label="Right side of the slider"></div>
+      </div>
+      <div style="display:grid;gap:18px">
+        <div>
+          <h3>Four samples per pixel, cleaned up in 4 ms</h3>
+          <p class="cap" style="margin-top:6px">Left-eye frames from the real-time pipeline. Drag the divider to compare the 4-sample input with a denoised result or with brute-force path tracing.</p>
+        </div>
+        <div class="gread" id="g-read"></div>
+        <div class="tablewrap"><table id="g-spp"></table></div>
+        <p class="cap" id="g-spp-cap"></p>
+      </div>
+    </div>
+
+    <div class="charts">
+      <div>
+        <h3>The stereo loss: agreement against fidelity</h3>
+        <svg id="g-trade" viewBox="0 0 460 300" role="img" aria-label="PSNR against left/right disagreement for each consistency weight" style="width:100%;height:auto;margin-top:8px"></svg>
+        <p class="cap" id="g-trade-cap"></p>
+      </div>
+      <div>
+        <h3>Same numbers as a table</h3>
+        <div class="tablewrap" style="margin-top:10px"><table id="g-sweep"></table></div>
+        <p class="cap" style="margin-top:10px" id="g-sweep-cap"></p>
+      </div>
+    </div>
+
+    <div style="display:grid;gap:10px">
+      <h3>Where the two eyes still disagree</h3>
+      <p class="cap">|left − warp(right)|, ×5, at 4 samples per pixel. The noisy input disagrees everywhere. After denoising, what is left sits on object outlines.</p>
+      <div class="errs5" id="g-diff"></div>
+    </div>
+
+    <div class="split">
+      <div style="display:grid;gap:12px">
+        <h3>Training longer mattered more than the loss</h3>
+        <div class="shift" id="g-shift"></div>
+        <p class="cap" id="g-shift-cap"></p>
+      </div>
+      <div>
+        <h3>GPU path tracer by sample count</h3>
+        <div class="tablewrap" style="margin-top:10px"><table id="g-div"></table></div>
+        <p class="cap" style="margin-top:10px" id="g-div-cap"></p>
+      </div>
+    </div>
+    <div class="findings four" id="g-findings"></div>
+  </section>
+
   <!-- status -->
   <section id="status">
     <div class="head">
       <span class="tag">Progress</span>
       <h2>Where the project stands</h2>
-      <p class="dim">Everything above ran on a laptop: the CPU backend for rendering and the Apple M2 GPU for training. The CUDA kernels are written and use the same integrator. The real-time measurements need an NVIDIA GPU, and those runs come next.</p>
+      <p class="dim" id="status-text">The interactive sections at the top were rendered on a laptop CPU. The CUDA backend, the full training runs and the real-time benchmarks have now been measured on an NVIDIA GPU. What is still missing is a comparison with published denoisers on the same scenes.</p>
     </div>
     <div class="phases" id="phases"></div>
   </section>
@@ -415,7 +550,7 @@ tr.grp td { border-top: 1px solid var(--dim); }
   <!-- rendering results -->
   <section id="render-results">
     <div class="head">
-      <span class="tag">Rendering results · CPU backend</span>
+      <span class="tag">Rendering results · laptop CPU backend</span>
       <h2>How the path tracer performs</h2>
       <p class="dim">All measurements come from the multithreaded CPU renderer on the laptop. They show that the renderer behaves as theory predicts, which techniques pay off, and how far a CPU is from the VR frame budget.</p>
     </div>
@@ -449,8 +584,8 @@ tr.grp td { border-top: 1px solid var(--dim); }
   <!-- results -->
   <section id="results">
     <div class="head">
-      <span class="tag">Training results · Apple M2</span>
-      <h2>How well the denoiser learned</h2>
+      <span class="tag">Small-scale training · Apple M2</span>
+      <h2>The small laptop training run</h2>
       <p class="dim">The denoiser outputs an image, not a class label, so accuracy and F1 score do not apply. It is a regression task, and it is judged by how close its output is to a clean reference rendered with many more samples.</p>
     </div>
     <div class="metrics">
@@ -1099,24 +1234,183 @@ tr.grp td { border-top: 1px solid var(--dim); }
     $("findings").innerHTML = [
       ["", "The denoiser works", `It gains up to +${(s1("baseline").psnr - s1("noisy").psnr).toFixed(1)} dB PSNR and +${(s1("baseline").ssim - s1("noisy").ssim).toFixed(2)} SSIM on unseen scenes. The gain is largest where the input is noisiest.`],
       ["", "The eyes agree twice as well", `Both models cut left/right disagreement from ${f4(s1("noisy").disagreement)} to about ${f4(s1("baseline").disagreement)}, because removing the noise removes most of the mismatch.`],
-      ["warn", "Stereo loss: not proven yet", "At this scale the stereo loss is level with the baseline on disagreement and gives up 0.2–0.9 dB PSNR. Only 2 test scenes and unconverged models make the difference too small to call. The full-scale λ sweep on the GPU will settle it."],
+      ["warn", "Too small to judge the stereo loss", "At this scale the stereo loss is level with the baseline on disagreement and gives up 0.2–0.9 dB PSNR. With 2 test scenes and unconverged models that difference cannot be called. The full-scale GPU study above settles it."],
+    ].map(([c, t, x]) => `<div class="finding ${c}"><b>${t}</b><span>${x}</span></div>`).join("");
+  })();
+
+  // =============== GPU results ===============
+  (function gpuResults() {
+    const G = D.gpu;
+    if (!G) { $("gpu").hidden = true; document.querySelector('nav a[href="#gpu"]').hidden = true; return; }
+    const f1 = (x) => x.toFixed(1), f2 = (x) => x.toFixed(2), d3 = (x) => (x * 1000).toFixed(2);
+    const pct = (a, b) => ((a / b - 1) * 100);
+    const tip = document.body.appendChild(Object.assign(document.createElement("div"), { id: "tip" }));
+    const showTip = (ev, html) => {
+      tip.innerHTML = html; tip.classList.add("on");
+      const r = ev.target.getBoundingClientRect(), x = ev.clientX ?? r.left + r.width / 2, y = ev.clientY ?? r.top;
+      tip.style.left = Math.max(8, Math.min(innerWidth - tip.offsetWidth - 8, x + 14)) + "px";
+      tip.style.top = Math.max(8, y - tip.offsetHeight - 12) + "px";
+    };
+    const hideTip = () => tip.classList.remove("on");
+    const hover = (el, html) => { el.tabIndex = 0;
+      ["pointermove", "focus"].forEach((e) => el.addEventListener(e, (ev) => showTip(ev, html)));
+      ["pointerleave", "blur"].forEach((e) => el.addEventListener(e, hideTip)); };
+
+    const frame = Object.fromEntries(G.frame.map((r) => [r.config, r]));
+    const base = frame.lowspp_baseline, raw = frame.lowspp_pathtrace, ste = frame.lowspp_stereo, hi = frame.highspp_pathtrace;
+    const q4 = G.quality["4"], sw4 = G.sweep["4"], ctrl = sw4[0], sel = sw4.find((r) => r.lambda === G.selected_lambda);
+    const gpu = G.throughput.find((r) => r.config === "cuda"), cpuAll = G.throughput.find((r) => r.config !== "cuda" && r.speedup > 1);
+    $("g-tag").textContent = `Measured on an ${G.hardware.gpu.replace(/,.*/, "")}`;
+    const FU = G.fusion, fu4 = FU ? FU.sweep["4"] : [], fsel = FU ? fu4.find((r) => r.lambda === FU.selected_lambda) : null;
+    const best = fsel || sel;   // the configuration the page calls "the best stereo setting"
+
+    // ---- headline tiles
+    $("g-tiles").innerHTML = [
+      ["stereo frame, 4 spp", `${f1(base.total)}<small>ms</small>`, `<i>${Math.round(base.fps)} FPS</i> for both eyes at ${G.res}², inside the ${f1(G.budget_ms)} ms budget of a 90 Hz headset`],
+      ["GPU vs CPU", `${Math.round(gpu.speedup)}<small>×</small>`, `faster than one CPU thread, <i>${f1(cpuAll.ms / gpu.ms)}×</i> faster than all ${cpuAll.config.match(/\d+/)[0]} threads, same image (${f1(G.agreement.psnr)} dB)`],
+      ["image quality, 4 spp", `${f1(q4.baseline.psnr)}<small>dB</small>`, `up from <i>${f1(q4.noisy.psnr)} dB</i> for the noisy input; SSIM ${f2(q4.noisy.ssim)} → ${q4.baseline.ssim.toFixed(3)}`],
+      ["left/right disagreement", `−${Math.round(-pct(q4.baseline.dis, q4.noisy.dis))}<small>%</small>`, `by denoising alone; ${fsel ? "sharing samples between the eyes plus the stereo loss" : "the stereo loss"} removes a further <i>${f1(-pct(best.dis, ctrl.dis))}%</i>`],
+    ].map(([k, b, s]) => `<div class="tile"><span class="k">${k}</span><b>${b}</b><span>${s}</span></div>`).join("");
+
+    // ---- frame budget (stacked horizontal bars, one shared scale)
+    const rows = [
+      ["Path tracing only", "4 spp, no denoiser", raw, false],
+      ["+ baseline denoiser", "half precision", base, false],
+      ["+ stereo-trained denoiser", `λ = ${G.selected_lambda}, half precision`, ste, false],
+      ...(FU ? [["+ cross-eye fusion denoiser", `λ = ${FU.selected_lambda}, half precision`, FU.frame, false]] : []),
+      ["+ baseline denoiser", "full precision, 1 scene", G.fp32, true],
+    ];
+    const maxMs = Math.max(12, ...rows.map((r) => r[2].total)) * 1.04, X = (ms) => (ms / maxMs * 100).toFixed(2) + "%";
+    const segs = [["render_l", "--c1", "Path trace, left eye"], ["render_r", "--c2", "Path trace, right eye"], ["denoise", "--c3", "Denoise both eyes"]];
+    const bud = $("g-budget");
+    bud.innerHTML = rows.map(([n, sub, r, over], i) => `<div class="brow"><div class="name">${n}<span>${sub}</span></div>
+      <div class="track" data-i="${i}">${segs.filter(([k]) => r[k] > 0).map(([k, c]) => `<div class="seg" data-k="${k}" style="width:${X(r[k])};background:var(${c})"></div>`).join("")}</div>
+      <div class="val">${f2(r.total)} ms<span>${r.total > G.budget_ms ? "over budget" : Math.round(1000 / r.total) + " FPS"}</span></div></div>`).join("")
+      + `<div class="brow" aria-hidden="true"><div></div><div class="baxis">${[0, 2, 4, 6, 8, 10, 12].filter((t) => t <= maxMs).map((t) => `<i style="left:${X(t)}"></i><span style="left:${X(t)}">${t}${t === 0 ? " ms" : ""}</span>`).join("")}</div><div></div></div>`;
+    bud.querySelectorAll(".track").forEach((tr) => { const [n, sub, r] = rows[tr.dataset.i];
+      tr.querySelectorAll(".seg").forEach((sg) => { const [, , lab] = segs.find(([k]) => k === sg.dataset.k);
+        hover(sg, `<b>${lab}</b>${f2(r[sg.dataset.k])} ms <span>· ${Math.round(r[sg.dataset.k] / r.total * 100)}% of ${f2(r.total)} ms</span><br><span>${n}, ${sub}</span>`); }); });
+    // budget line spans the bar column only
+    const first = bud.querySelector(".track"), line = document.createElement("div");
+    line.className = "bline"; line.innerHTML = `<span>90 Hz budget · ${f1(G.budget_ms)} ms</span>`; bud.appendChild(line);
+    const placeLine = () => { const a = first.getBoundingClientRect(), b = bud.getBoundingClientRect(); line.style.left = (a.left - b.left + a.width * G.budget_ms / maxMs) + "px"; };
+    placeLine(); addEventListener("resize", placeLine);
+    $("g-offscale").innerHTML = `Not shown: brute-force path tracing at ${hi.spp} spp takes <b>${Math.round(hi.total)} ms</b> per stereo frame (${f1(hi.fps)} FPS), about ${Math.round(hi.total / base.total)}× the denoised 4 spp frame. The budget is met in half precision only: in full precision the same network takes ${f1(G.fp32.denoise)} ms and the frame lands at ${f2(G.fp32.total)} ms.`;
+
+    // ---- scene comparison
+    let si = 0, method = "baseline";
+    const mLab = { baseline: "baseline denoiser", stereo: `stereo loss, λ = ${G.selected_lambda}`, reference: `${hi.spp} spp path tracing` };
+    $("g-scene").innerHTML = G.scenes.map((s, i) => `<button type="button" data-i="${i}">scene ${i + 1}</button>`).join("");
+    $("g-method").innerHTML = Object.entries(mLab).map(([k, v]) => `<button type="button" data-m="${k}">${v}</button>`).join("");
+    preload(G.scenes.flatMap((s) => Object.values(s.img)));
+    function renderScene() {
+      const s = G.scenes[si], m = s.metrics;
+      compare($("g-cmp"), s.img.noisy, s.img[method], "4 spp input", mLab[method]);
+      pressGroup($("g-scene"), $("g-scene").children[si]);
+      pressGroup($("g-method"), $("g-method").querySelector(`[data-m="${method}"]`));
+      const cell = (k, lab) => `<div><span>${lab}</span><b>${f1(m[k].psnr)} dB</b><em>disagreement ${d3(m[k].dis)}</em></div>`;
+      $("g-read").innerHTML = cell("noisy", "4 spp input") + cell("baseline", "baseline") + cell("stereo", "stereo loss");
+    }
+    $("g-scene").onclick = (e) => { if (e.target.dataset.i) { si = +e.target.dataset.i; renderScene(); } };
+    $("g-method").onclick = (e) => { if (e.target.dataset.m) { method = e.target.dataset.m; renderScene(); } };
+    renderScene();
+
+    // ---- quality by sample count
+    const cols = [["noisy", "noisy input"], ["baseline", "baseline"], ["stereo", `stereo loss (λ = ${G.selected_lambda})`]];
+    $("g-spp").innerHTML = `<tr><th>PSNR / disagreement ×10³</th>${["1", "4", "8"].map((s) => `<th>${s} spp</th>`).join("")}</tr>`
+      + cols.map(([k, lab]) => `<tr${k === "stereo" ? ' class="hl"' : ""}><td>${lab}</td>${["1", "4", "8"].map((s) => `<td>${f1(G.quality[s][k].psnr)} / ${d3(G.quality[s][k].dis)}</td>`).join("")}</tr>`).join("");
+    $("g-spp-cap").textContent = `Mean over the ${G.scenes.length} test scenes. One network handles all three noise levels. The reading tiles show scene values from the C++ pipeline at 4 spp.`;
+
+    // ---- trade-off chart: PSNR (y) against disagreement (x), one point per λ
+    (function trade() {
+      const W = 460, H = 300, m = { l: 46, r: 18, t: 34, b: 40 };
+      const all = sw4.concat(fu4);
+      const xs = all.flatMap((r) => [r.dis_lo, r.dis_hi]).concat(q4.baseline.dis).map((v) => v * 1000);
+      const ys = all.flatMap((r) => [r.psnr_lo, r.psnr_hi]).concat(q4.baseline.psnr);
+      const x0 = Math.floor(Math.min(...xs) * 20 - 1) / 20, x1 = Math.ceil(Math.max(...xs) * 20 + 1) / 20;
+      const y0 = Math.floor(Math.min(...ys) * 2 - 0.5) / 2, y1 = Math.ceil(Math.max(...ys) * 2 + 0.5) / 2;
+      const X = (v) => m.l + (v * 1000 - x0) / (x1 - x0) * (W - m.l - m.r), Y = (v) => H - m.b - (v - y0) / (y1 - y0) * (H - m.t - m.b);
+      const ink = css("--s1"), ink2 = css("--s2"), rim = css("--rim"), dim = css("--dim"), bg = css("--void"), txt = css("--text");
+      let g = "";
+      for (let t = Math.ceil(y0 * 2) / 2; t <= y1 + 1e-9; t += 0.5) g += `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(t)}" y2="${Y(t)}" stroke="${rim}"/><text x="${m.l - 8}" y="${Y(t) + 4}" text-anchor="end">${t.toFixed(1)}</text>`;
+      for (let t = Math.ceil(x0 * 10) / 10; t <= x1 + 1e-9; t += 0.1) g += `<line x1="${X(t / 1000)}" x2="${X(t / 1000)}" y1="${H - m.b}" y2="${H - m.b + 5}" stroke="${rim}"/><text x="${X(t / 1000)}" y="${H - m.b + 18}" text-anchor="middle">${t.toFixed(1)}</text>`;
+      g += `<text x="${m.l}" y="${H - 6}">left/right disagreement ×10³  (← better)</text><text x="${m.l - 34}" y="12">PSNR, dB  (↑ better)</text>`;
+      g += `<polyline fill="none" stroke="${ink}" stroke-width="2" stroke-linejoin="round" points="${sw4.map((r) => `${X(r.dis)},${Y(r.psnr)}`).join(" ")}"/>`;
+      sw4.forEach((r) => { g += `<line x1="${X(r.dis_lo)}" x2="${X(r.dis_hi)}" y1="${Y(r.psnr)}" y2="${Y(r.psnr)}" stroke="${ink}" stroke-opacity="0.45" stroke-width="1.5"/>`
+        + `<line x1="${X(r.dis)}" x2="${X(r.dis)}" y1="${Y(r.psnr_lo)}" y2="${Y(r.psnr_hi)}" stroke="${ink}" stroke-opacity="0.45" stroke-width="1.5"/>`; });
+      // fusion series: drawn first so the single-view points stay on top where they are close
+      if (fu4.length) {
+        g += `<polyline fill="none" stroke="${ink2}" stroke-width="2" stroke-linejoin="round" points="${fu4.map((r) => `${X(r.dis)},${Y(r.psnr)}`).join(" ")}"/>`;
+        fu4.forEach((r, i) => { const pick = r.lambda === FU.selected_lambda;
+          g += `<line x1="${X(r.dis_lo)}" x2="${X(r.dis_hi)}" y1="${Y(r.psnr)}" y2="${Y(r.psnr)}" stroke="${ink2}" stroke-opacity="0.45" stroke-width="1.5"/>`
+            + `<line x1="${X(r.dis)}" x2="${X(r.dis)}" y1="${Y(r.psnr_lo)}" y2="${Y(r.psnr_hi)}" stroke="${ink2}" stroke-opacity="0.45" stroke-width="1.5"/>`
+            + `<circle class="pt" data-f="${i}" cx="${X(r.dis)}" cy="${Y(r.psnr)}" r="${pick ? 6.5 : 5}" fill="${pick ? ink2 : bg}" stroke="${ink2}" stroke-width="2"/>`
+            + `<text x="${X(r.dis) - 9}" y="${Y(r.psnr) - 9}" text-anchor="end" style="fill:${txt}">${r.lambda === 0 ? "fusion, λ = 0" : `λ = ${r.lambda}${pick ? " · selected" : ""}`}</text>`; });
+      }
+      const labelled = new Set([0, 1, 2, 5]);
+      sw4.forEach((r, i) => {
+        g += `<circle class="pt" data-i="${i}" cx="${X(r.dis)}" cy="${Y(r.psnr)}" r="5" fill="${bg}" stroke="${ink}" stroke-width="2"/>`;
+        if (!labelled.has(r.lambda) || (r.lambda === 0 && fu4.length)) return;
+        g += `<text x="${X(r.dis) + 9}" y="${Y(r.psnr) + 19}" style="fill:${txt}">λ = ${r.lambda}${r.lambda === 0 ? " (control)" : ""}</text>`; });
+      g += `<rect class="pt" data-i="base" x="${X(q4.baseline.dis) - 5}" y="${Y(q4.baseline.psnr) - 5}" width="10" height="10" fill="${bg}" stroke="${dim}" stroke-width="2"/><text x="${X(q4.baseline.dis) + 10}" y="${Y(q4.baseline.psnr) + 16}">baseline</text>`;
+      const svg = $("g-trade"); svg.innerHTML = g;
+      svg.querySelectorAll(".pt").forEach((el) => { const i = el.dataset.i;
+        if (el.dataset.f !== undefined) { const r = fu4[el.dataset.f];
+          return hover(el, `<b>Cross-eye fusion, λ = ${r.lambda}</b>${f2(r.psnr)} dB <span>[${f2(r.psnr_lo)}–${f2(r.psnr_hi)}]</span><br>disagreement ${d3(r.dis)} <span>[${d3(r.dis_lo)}–${d3(r.dis_hi)}]</span><br><span>vs control: ${(r.psnr - ctrl.psnr >= 0 ? "+" : "") + (r.psnr - ctrl.psnr).toFixed(2)} dB, ${pct(r.dis, ctrl.dis).toFixed(1)}% disagreement</span>`); }
+        if (i === "base") return hover(el, `<b>Baseline</b>${f2(q4.baseline.psnr)} dB · disagreement ${d3(q4.baseline.dis)}<br><span>single-view network, ${G.training.after.epochs} epochs</span>`);
+        const r = sw4[i];
+        hover(el, `<b>Single view, λ = ${r.lambda}${r.lambda === 0 ? " (control)" : ""}</b>${f2(r.psnr)} dB <span>[${f2(r.psnr_lo)}–${f2(r.psnr_hi)}]</span><br>disagreement ${d3(r.dis)} <span>[${d3(r.dis_lo)}–${d3(r.dis_hi)}]</span>`
+          + (r.lambda ? `<br><span>vs control: ${(r.psnr - ctrl.psnr).toFixed(2)} dB, ${pct(r.dis, ctrl.dis).toFixed(1)}% disagreement</span>` : "")); });
+      $("g-trade-cap").innerHTML = `Each point is one loss weight λ at 4 spp, the mean of <b>${G.seeds} training seeds</b>; whiskers show the range over seeds. All models start from the same converged baseline. Raising λ moves left (the eyes agree more) and down (each eye is slightly less accurate).${fu4.length ? " With cross-eye fusion the same agreement costs less accuracy." : ""}`;
+      if (fu4.length) svg.insertAdjacentHTML("afterend", `<div class="legend2"><span><i style="border-color:${ink}"></i>single-view network</span><span><i style="border-color:${ink2}"></i>cross-eye fusion</span></div>`);
+    })();
+    $("g-sweep").innerHTML = `<tr><th>λ</th><th>PSNR dB</th><th>Δ</th><th>Disagr. ×10³</th><th>Δ</th></tr>`
+      + `<tr><td>baseline</td><td>${f2(q4.baseline.psnr)}</td><td></td><td>${d3(q4.baseline.dis)}</td><td></td></tr>`
+      + sw4.map((r) => `<tr${r.lambda === G.selected_lambda ? ' class="hl"' : ""}><td>${r.lambda}${r.lambda === 0 ? " (control)" : ""}</td><td>${f2(r.psnr)}</td><td>${r.lambda ? (r.psnr - ctrl.psnr).toFixed(2) : ""}</td><td>${d3(r.dis)}</td><td>${r.lambda ? pct(r.dis, ctrl.dis).toFixed(1) + "%" : ""}</td></tr>`).join("")
+      + fu4.map((r, i) => `<tr class="${i === 0 ? "grp" : ""}${r === fsel ? " hl" : ""}"><td>fusion, ${r.lambda}</td><td>${f2(r.psnr)}</td><td>${(r.psnr - ctrl.psnr >= 0 ? "+" : "") + (r.psnr - ctrl.psnr).toFixed(2)}</td><td>${d3(r.dis)}</td><td>${pct(r.dis, ctrl.dis).toFixed(1)}%</td></tr>`).join("");
+    $("g-sweep-cap").textContent = `4 spp, mean of ${G.seeds} seeds and ${G.scenes.length} test scenes. Δ is relative to the control, which gets the same fine-tuning without the stereo loss. The highlighted settings were picked on validation scenes, not on these test scenes.${FU ? ` Fusion models were fine-tuned for ${FU.epochs} epochs, the single-view ones for ${G.training.finetune_epochs}.` : ""}`;
+
+    // ---- difference maps
+    $("g-diff").innerHTML = G.diff.map((d) => `<figure><img src="${d.img}" alt="Left/right difference map, ${d.label}" loading="lazy"><figcaption><b>${d.label}</b></figcaption></figure>`).join("");
+
+    // ---- training before / after
+    const T = G.training;
+    const box = (t, cls) => `<div class="box ${cls}"><span>baseline, ${t.epochs} epochs</span><b>${f1(t.psnr)} dB</b><em>disagreement ${d3(t.dis)}</em></div>`;
+    $("g-shift").innerHTML = box(T.before, "") + `<span class="arrow" aria-hidden="true">→</span>` + box(T.after, "now");
+    $("g-shift-cap").innerHTML = `Training the same baseline for twice as long added <b>${f1(T.after.psnr - T.before.psnr)} dB</b> and cut disagreement by <b>${Math.round(-pct(T.after.dis, T.before.dis))}%</b>, with no stereo mechanism at all. The best stereo-loss setting changes disagreement by ${f1(-pct(sel.dis, ctrl.dis))}%. A sharper denoiser is the first route to eyes that agree.`;
+
+    // ---- GPU renderer table
+    $("g-div").innerHTML = `<tr><th>spp</th><th>ms / frame</th><th>billion rays / s</th><th>idle in 8×8 blocks</th></tr>`
+      + G.divergence.map((r) => `<tr${r.spp === 4 ? ' class="hl"' : ""}><td>${r.spp}</td><td>${r.ms < 10 ? f2(r.ms) : f1(r.ms)}</td><td>${f2(r.grays)}</td><td>${Math.round(r.div8 * 100)}%</td></tr>`).join("");
+    $("g-div-cap").textContent = `One eye at ${G.res}², built-in glossy test scene. "Idle" estimates the share of GPU thread time spent waiting for the slowest pixel in a block; it is highest at the low sample counts real-time rendering uses.`;
+
+    // ---- findings
+    const q8 = G.quality["8"];
+    $("g-findings").innerHTML = [
+      ["", "Real-time stereo path tracing works", `${f1(base.total)} ms for a denoised stereo frame leaves ${Math.round((1 - base.total / G.budget_ms) * 100)}% of the 90 Hz budget unused at ${G.res}² per eye. The denoiser, not the path tracer, is ${Math.round(base.denoise / base.total * 100)}% of the frame.`],
+      ["", "The stereo loss helps, a little", `It lowered disagreement in every scene and every seed, by ${f1(-pct(sel.dis, ctrl.dis))}% for ${f2(ctrl.psnr - sel.psnr)} dB at λ = ${G.selected_lambda}. It costs nothing at run time, but it is not free in quality.`],
+      ...(FU ? [["", "Sharing samples makes it nearly free", `Letting each eye see the other eye's samples, together with the loss, cuts disagreement by ${f1(-pct(fsel.dis, ctrl.dis))}% for ${f2(Math.abs(ctrl.psnr - fsel.psnr))} dB and ${f2(FU.frame.denoise - FU.baseline_denoise)} ms more per frame. Sharing alone adds ${f2(fu4[0].psnr - ctrl.psnr)} dB but does not make the eyes agree more.`]] : []),
+      ["warn", "The reference is too noisy to be a floor", `At 8 spp the denoised pair disagrees less (${d3(q8.baseline.dis)}) than the 2048 spp reference (${d3(q8.reference.dis)}). The reference still carries its own noise, so "distance to ground truth" overstates how close the eyes can get.`],
+      ...(FU ? [] : [["warn", "Still open: sharing samples between eyes", "A loss can only change how each eye is denoised from its own samples. Feeding each eye the other eye's reprojected samples is implemented and tested, and its GPU run is the next experiment."]]),
     ].map(([c, t, x]) => `<div class="finding ${c}"><b>${t}</b><span>${x}</span></div>`).join("");
   })();
 
   // =============== status ===============
   const phases = [
     ["01", "CPU path tracer", "BVH, NEE, Russian roulette, multithreaded", "done"],
-    ["02", "CUDA backend", "kernels written on the shared integrator; compile and CPU-vs-GPU check on an NVIDIA GPU", "gpu"],
+    ["02", "CUDA backend", D.gpu ? `matches the CPU reference (${D.gpu.agreement.psnr.toFixed(1)} dB) and runs ${Math.round(D.gpu.throughput[2].speedup)}× faster than one thread` : "kernels written on the shared integrator; compile and CPU-vs-GPU check on an NVIDIA GPU", D.gpu ? "done" : "gpu"],
     ["03", "Feature buffers", "normal, albedo, depth, work counters", "done"],
     ["04", "Stereo rendering", "parallel-axis rig, disparity, anaglyph", "done"],
     ["05", "Procedural dataset", "stereo scene generator and patch extraction", "done"],
     ["06", "U-Net denoiser", "trained and evaluated on unseen scenes", "done"],
-    ["07", "Stereo-consistency loss", "implemented and trained; full λ sweep on GPU", "done"],
+    ["07", "Stereo-consistency loss", D.gpu ? "controlled λ sweep, 3 seeds: a small, consistent gain" : "implemented and trained; full λ sweep on GPU", "done"],
     ["08", "C++ render + denoise", "LibTorch output matches Python exactly", "done"],
-    ["09", "90 FPS benchmarks", "frame times and profiling on an NVIDIA GPU", "gpu"],
+    ["09", "90 FPS benchmarks", D.gpu ? `${D.gpu.frame[2].total.toFixed(1)} ms per stereo frame at 4 spp, ${Math.round(D.gpu.frame[2].fps)} FPS` : "frame times and profiling on an NVIDIA GPU", D.gpu ? "done" : "gpu"],
+    ["10", "Cross-eye fusion", D.gpu && D.gpu.fusion ? "each eye also sees the other eye's samples: the best trade-off measured, a modest gain" : "each eye also sees the other eye's samples; implemented and tested, GPU run pending", D.gpu && D.gpu.fusion ? "done" : "gpu"],
+    ["11", "Comparison with published denoisers", "run established denoisers and stereo blending on the same test scenes", "todo"],
   ];
   $("phases").innerHTML = phases.map(([n, t, s, k]) => `<div class="phase"><span class="n">PHASE ${n}</span><b>${t}</b><span class="s">${s}</span>
-    <span class="chip ${k}">${k === "done" ? "working" : "next · GPU"}</span></div>`).join("");
-  $("foot").textContent = `All images are output of the project's own path tracer, rendered on CPU. Updated ${D.generated}.`;
+    <span class="chip ${k === "done" ? "done" : "gpu"}">${k === "done" ? "working" : k === "todo" ? "next" : "next · GPU"}</span></div>`).join("");
+  $("foot").textContent = `All images are output of the project's own path tracer. Interactive views were rendered on CPU; the GPU results section uses frames from the CUDA pipeline. Updated ${D.generated}.`;
 })();
 </script>

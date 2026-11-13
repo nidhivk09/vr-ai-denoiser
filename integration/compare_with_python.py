@@ -17,7 +17,7 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common.exr import read_exr  # noqa: E402
-from denoiser.model import denoise_full, load_checkpoint  # noqa: E402
+from denoiser.model import denoise_full, load_checkpoint, pair_input  # noqa: E402
 from denoiser.train import pick_device  # noqa: E402
 
 
@@ -31,11 +31,18 @@ def main() -> None:
     device = pick_device(args.device)
     model, _ = load_checkpoint(args.checkpoint, device)
     report = {}
-    for eye in ("left", "right"):
-        x = np.concatenate([read_exr(args.pipeline_out / f"{eye}_{b}.exr") for b in ("color", "normal", "albedo")], -1)
-        with torch.no_grad():
-            y = denoise_full(model, torch.from_numpy(x.transpose(2, 0, 1))[None].to(device))
-        py = y[0].permute(1, 2, 0).cpu().numpy()
+
+    def load(eye: str, buffers: tuple[str, ...]) -> torch.Tensor:
+        x = np.concatenate([read_exr(args.pipeline_out / f"{eye}_{b}.exr") for b in buffers], -1)
+        return torch.from_numpy(x.transpose(2, 0, 1))[None]
+
+    inputs = {eye: load(eye, ("color", "normal", "albedo")) for eye in ("left", "right")}
+    # Only fusion models read the disparity; older pipeline outputs do not have the file.
+    disp = {eye: load(eye, ("disparity",)) if model.fusion else None for eye in ("left", "right")}
+    with torch.no_grad():
+        y = denoise_full(model, pair_input(model, inputs["left"], inputs["right"], disp["left"], disp["right"]).to(device))
+    for i, eye in enumerate(("left", "right")):
+        py = y[i].permute(1, 2, 0).cpu().numpy()
         cpp = read_exr(args.pipeline_out / f"{eye}_denoised.exr")
         diff = np.abs(cpp - py)
         report[eye] = {"max_abs_diff": float(diff.max()), "mean_abs_diff": float(diff.mean()),

@@ -65,11 +65,29 @@ def _masked_mean(x: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
 def stereo_consistency_loss(left_pred: torch.Tensor, right_pred: torch.Tensor,
                             left_disp: torch.Tensor, right_disp: torch.Tensor,
-                            symmetric: bool = True) -> torch.Tensor:
-    """L1(left_pred, warp(right_pred)) over mutually visible pixels (log space).
-    With symmetric=True the right->left term is added and the two are averaged."""
+                            symmetric: bool = True,
+                            left_target: torch.Tensor | None = None,
+                            right_target: torch.Tensor | None = None) -> torch.Tensor:
+    """L1(left, warp(right)) over mutually visible pixels (log space).
+    With symmetric=True the right->left term is added and the two are averaged.
+
+    Without targets the predictions themselves are compared ("output" form).
+    That also penalises left/right differences the ground truth really has
+    (view-dependent highlights, resampling blur of the warp), so it pulls
+    against the reconstruction loss and can be lowered by blurring.
+
+    With targets the per-eye *errors* (pred - target, log space) are compared
+    ("error" form): |e_left - warp(e_right)|. The warp is linear, so this is
+    the output form minus the ground truth's own disagreement. It is exactly
+    zero for a perfect prediction and only penalises denoising artefacts that
+    differ between the eyes."""
+    if (left_target is None) != (right_target is None):
+        raise ValueError("pass both targets or neither")
     left_mask, right_mask = visibility_masks(left_disp, right_disp)
     lp, rp = log_space(left_pred), log_space(right_pred)
+    if left_target is not None:
+        lp = lp - log_space(left_target)
+        rp = rp - log_space(right_target)
     r_in_l, _ = warp_right_to_left(rp, left_disp)
     loss = _masked_mean((lp - r_in_l).abs(), left_mask)
     if symmetric:
@@ -91,3 +109,37 @@ def stereo_disagreement(left: torch.Tensor, right: torch.Tensor,
     r_in_l, _ = warp_right_to_left(display(right), left_disp)
     diff = (display(left) - r_in_l).abs().mean(dim=1, keepdim=True) * left_mask
     return diff.sum(dim=(1, 2, 3)) / left_mask.sum(dim=(1, 2, 3)).clamp(min=1.0)
+
+
+@torch.no_grad()
+def stereo_disagreement_split(left: torch.Tensor, right: torch.Tensor, ref_left: torch.Tensor, ref_right: torch.Tensor,
+                              left_disp: torch.Tensor, right_disp: torch.Tensor, tau: float = 0.02) -> dict:
+    """stereo_disagreement, separately over two kinds of mutually visible pixels:
+
+      matched    the reference pair itself agrees there (difference <= tau on the
+                 display scale): diffuse surfaces away from silhouettes. Any
+                 disagreement of a denoised pair here is a denoising artefact.
+      unmatched  the reference pair disagrees there (> tau): view-dependent
+                 shading (highlights, reflections, refraction) and silhouettes,
+                 where the two eyes legitimately see different things.
+
+    The reference difference is box-filtered (3x3) before thresholding so its own
+    residual noise does not decide the class of single pixels. Returns means over
+    the batch and the share of visible pixels that are unmatched."""
+    def display(x):
+        return torch.clamp(x, 0.0, 1.0) ** (1.0 / 2.2)
+
+    left_mask, _ = visibility_masks(left_disp, right_disp)
+    ref_in_l, _ = warp_right_to_left(display(ref_right), left_disp)
+    ref_diff = (display(ref_left) - ref_in_l).abs().mean(dim=1, keepdim=True)
+    ref_diff = F.avg_pool2d(ref_diff, 3, stride=1, padding=1, count_include_pad=False)
+    unmatched = left_mask * (ref_diff > tau).to(left_mask.dtype)
+    matched = left_mask - unmatched
+    r_in_l, _ = warp_right_to_left(display(right), left_disp)
+    diff = (display(left) - r_in_l).abs().mean(dim=1, keepdim=True)
+
+    def mean_over(mask):
+        return ((diff * mask).sum(dim=(1, 2, 3)) / mask.sum(dim=(1, 2, 3)).clamp(min=1.0)).mean().item()
+
+    return {"matched": mean_over(matched), "unmatched": mean_over(unmatched),
+            "unmatched_share": (unmatched.sum() / left_mask.sum().clamp(min=1.0)).item()}

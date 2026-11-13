@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import subprocess
 import sys
 from collections import defaultdict
@@ -88,6 +89,9 @@ def main() -> None:
                 cmd = [str(find_pipeline()), *common, "--warmup", "1" if spp >= 256 else "5"]
                 if model:
                     cmd += ["--model", str(model)] + (["--half"] if args.half else [])
+                    meta = Path(model).with_suffix(".json")  # written by export_model.py
+                    if meta.exists() and json.loads(meta.read_text()).get("fusion"):
+                        cmd.append("--fusion")
                 if args.readback:
                     cmd.append("--readback")
                 if args.device:

@@ -6,6 +6,9 @@
 The exported module takes a raw (N, 9, H, W) float tensor (noisy color, normal,
 albedo straight from the renderer) and returns (N, 3, H, W) linear HDR color.
 H and W must be multiples of 2**levels; the C++ pipeline pads to 16.
+
+A fusion model takes (2B, 10, H, W): stereo pairs ordered [lefts..., rights...]
+with the disparity in pixels as the 10th channel (run_pipeline --fusion).
 """
 from __future__ import annotations
 
@@ -47,16 +50,25 @@ def main() -> None:
     mult = 2 ** model.levels
     h = (args.height + mult - 1) // mult * mult
     w = (args.width + mult - 1) // mult * mult
-    example = torch.rand(2, 9, h, w, device=device, dtype=dtype)
-    example[:, 0:3] *= 4.0
+    c = model.in_channels
+
+    def sample(n: int, hh: int, ww: int) -> torch.Tensor:
+        x = torch.rand(n, c, hh, ww, device=device, dtype=dtype)
+        x[:, 0:3] *= 3.0
+        if model.fusion:  # smooth disparity field of a few pixels, like a real one
+            x[:, 9:10] = 4.0 + 8.0 * torch.linspace(0, 1, ww, device=device, dtype=dtype).view(1, 1, 1, ww)
+        return x
+
+    example = sample(2, h, w)
     with torch.no_grad():
         traced = torch.jit.trace(model, example)
         traced = torch.jit.freeze(traced.eval())
         # Verify against eager mode, including a different resolution.
-        for shape in [(2, 9, h, w), (1, 9, h // 2, w // 2 + mult)]:
-            x = torch.rand(*shape, device=device, dtype=dtype) * 2.0
+        # (a fusion model needs whole stereo pairs, so its batch stays even)
+        for shape in [(2, h, w), (4 if model.fusion else 1, h // 2, w // 2 + mult)]:
+            x = sample(*shape)
             err = (traced(x).float() - model(x).float()).abs().max().item()
-            print(f"traced vs eager max abs diff at {tuple(shape)}: {err:.2e}")
+            print(f"traced vs eager max abs diff at {(shape[0], c, *shape[1:])}: {err:.2e}")
             if err > 1e-2:
                 raise SystemExit("traced model does not match eager model")
     out.parent.mkdir(parents=True, exist_ok=True)

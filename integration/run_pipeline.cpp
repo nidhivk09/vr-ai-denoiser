@@ -44,6 +44,7 @@ struct Options {
     std::string rng = "curand";
     float ipd = 0.063f;
     bool half = false;
+    bool fusion = false;
     bool readback = false;
     bool save = true;
     int threads = 0;
@@ -54,6 +55,7 @@ void usage() {
   --scene SPEC        scene file or builtin:cornell (default)
   --model FILE        TorchScript denoiser (omit to measure path tracing only)
   --half              the model was exported with --half
+  --fusion            the model is a cross-eye fusion model (takes disparity as a 10th channel)
   --config NAME       label written to the CSV (e.g. lowspp_stereo)
   --width W --height H --spp N --max-depth N --clamp X --seed N --ipd X
   --device cuda|cpu   renderer + denoiser device (default cuda if available)
@@ -95,6 +97,7 @@ Options parse(int argc, char** argv) {
         else if (a == "--threads") o.threads = std::stoi(need(i));
         else if (a == "--ipd") o.ipd = std::stof(need(i));
         else if (a == "--half") o.half = true;
+        else if (a == "--fusion") o.fusion = true;
         else if (a == "--readback") o.readback = true;
         else if (a == "--no-save") o.save = false;
         else throw std::runtime_error("unknown option " + a);
@@ -158,13 +161,16 @@ int run(int argc, char** argv) {
 
     StereoRig rig = make_stereo_rig(scene.camera, o.width, o.height, o.ipd);
     std::vector<EyeBuffers> eyes = {
-        {backend->color_ptr(EYE_LEFT), backend->normal_ptr(EYE_LEFT), backend->albedo_ptr(EYE_LEFT), out_left.data_ptr<float>()},
-        {backend->color_ptr(EYE_RIGHT), backend->normal_ptr(EYE_RIGHT), backend->albedo_ptr(EYE_RIGHT), out_right.data_ptr<float>()},
+        {backend->color_ptr(EYE_LEFT), backend->normal_ptr(EYE_LEFT), backend->albedo_ptr(EYE_LEFT),
+         out_left.data_ptr<float>(), backend->depth_ptr(EYE_LEFT)},
+        {backend->color_ptr(EYE_RIGHT), backend->normal_ptr(EYE_RIGHT), backend->albedo_ptr(EYE_RIGHT),
+         out_right.data_ptr<float>(), backend->depth_ptr(EYE_RIGHT)},
     };
+    if (denoiser && o.fusion) denoiser->enable_fusion(o.ipd * rig.left.focal_px);
 
     std::cout << "config '" << o.config << "' | scene " << scene.name << " | " << o.width << "x" << o.height
               << " per eye | spp " << o.params.spp << "\nrenderer: " << backend->description()
-              << "\ndenoiser: " << (denoiser ? o.model + (o.half ? " (fp16)" : "") : "none") << "\n";
+              << "\ndenoiser: " << (denoiser ? o.model + (o.half ? " (fp16)" : "") + (o.fusion ? " (cross-eye fusion)" : "") : "none") << "\n";
 
     std::ofstream csv;
     if (!o.csv.empty()) {
@@ -230,6 +236,11 @@ int run(int argc, char** argv) {
             write_exr_rgb((fs::path(o.out) / (name + "_normal.exr")).string(), fb.normal);
             write_exr_rgb((fs::path(o.out) / (name + "_albedo.exr")).string(), fb.albedo);
             write_png((fs::path(o.out) / (name + "_color.png")).string(), fb.color, PngMode::Gamma);
+            Image disp;  // what a fusion model was given; compare_with_python.py reads it back
+            disp.resize(o.width, o.height, 1);
+            for (size_t i = 0; i < disp.data.size(); ++i)
+                disp.data[i] = disparity_px(o.ipd, rig.left.focal_px, fb.depth.data[i]);
+            write_exr((fs::path(o.out) / (name + "_disparity.exr")).string(), disp, {"Y"});
             if (denoiser) {
                 Image den = wrap_host(eye == EYE_LEFT ? out_left : out_right, o.width, o.height);
                 write_exr_rgb((fs::path(o.out) / (name + "_denoised.exr")).string(), den);

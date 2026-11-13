@@ -258,6 +258,55 @@ class ConsistencyLossTest(unittest.TestCase):
         self.assertEqual(losses.stereo_consistency_loss(left, right, dl, dr).shape, ())
 
 
+class ErrorConsistencyLossTest(unittest.TestCase):
+    """The error-referenced form: |e_left - warp(e_right)| with e = pred - target (log space)."""
+
+    @staticmethod
+    def targets(d: float = 8.0):
+        """Ground truth that is *not* stereo-consistent (as with a view-dependent highlight)."""
+        left, right = ramp(x0=0.0), ramp(x0=d) * 1.3
+        return left, right, const(d), const(d)
+
+    def test_zero_for_a_perfect_prediction_even_if_the_truth_disagrees(self):
+        lt, rt, dl, dr = self.targets()
+        self.assertGreater(losses.stereo_consistency_loss(lt, rt, dl, dr).item(), 1e-2)  # output form objects
+        loss = losses.stereo_consistency_loss(lt, rt, dl, dr, left_target=lt, right_target=rt)
+        self.assertLess(loss.item(), TOL)
+
+    def test_equals_the_output_form_when_the_truth_is_consistent(self):
+        lt, rt, dl, dr = ramp(x0=0.0), ramp(x0=8.0), const(8.0), const(8.0)
+        lp, rp = lt * 1.1, rt * 1.4
+        a = losses.stereo_consistency_loss(lp, rp, dl, dr, left_target=lt, right_target=rt).item()
+        b = losses.stereo_consistency_loss(lp, rp, dl, dr).item()
+        self.assertAlmostEqual(a, b, places=4)
+
+    def test_same_error_in_both_eyes_is_not_penalised(self):
+        """A constant log-space offset in both eyes is a shared error: wrong, but consistent."""
+        lt, rt, dl, dr = self.targets()
+        shift = lambda t: torch.expm1(torch.log1p(t) + 0.2)  # noqa: E731
+        loss = losses.stereo_consistency_loss(shift(lt), shift(rt), dl, dr, left_target=lt, right_target=rt)
+        self.assertLess(loss.item(), 1e-4)
+
+    def test_error_in_one_eye_only_is_penalised(self):
+        lt, rt, dl, dr = self.targets()
+        shift = lambda t: torch.expm1(torch.log1p(t) + 0.2)  # noqa: E731
+        loss = losses.stereo_consistency_loss(shift(lt), rt, dl, dr, left_target=lt, right_target=rt)
+        self.assertGreater(loss.item(), 0.1)
+
+    def test_gradients_reach_both_eyes(self):
+        lt, rt, dl, dr = self.targets()
+        lp = (lt * 1.1).requires_grad_(True)
+        rp = (rt * 1.3).requires_grad_(True)
+        losses.stereo_consistency_loss(lp, rp, dl, dr, left_target=lt, right_target=rt).backward()
+        self.assertGreater(lp.grad.abs().sum().item(), 0.0)
+        self.assertGreater(rp.grad.abs().sum().item(), 0.0)
+
+    def test_one_target_alone_is_rejected(self):
+        lt, rt, dl, dr = self.targets()
+        with self.assertRaises(ValueError):
+            losses.stereo_consistency_loss(lt, rt, dl, dr, left_target=lt)
+
+
 class DisagreementMetricTest(unittest.TestCase):
     """stereo_disagreement is the reported headline metric, on display-referred
     images (clamp to [0,1], gamma 2.2)."""
@@ -299,6 +348,49 @@ class DisagreementMetricTest(unittest.TestCase):
         left, right, dl, dr = ConsistencyLossTest.consistent_pair()
         out = losses.stereo_disagreement(left.requires_grad_(True), right, dl, dr)
         self.assertFalse(out.requires_grad)
+
+
+class DisagreementSplitTest(unittest.TestCase):
+    """stereo_disagreement_split: matched = the reference pair agrees there."""
+
+    @staticmethod
+    def pair(d: float = 8.0):
+        ref_l, ref_r = ramp(x0=0.0), ramp(x0=d)
+        return ref_l, ref_r, const(d), const(d)
+
+    def test_consistent_reference_has_no_unmatched_pixels(self):
+        ref_l, ref_r, dl, dr = self.pair()
+        out = losses.stereo_disagreement_split(ref_l, ref_r, ref_l, ref_r, dl, dr)
+        self.assertEqual(out["unmatched_share"], 0.0)
+        self.assertLess(out["matched"], 1e-4)
+
+    def test_reference_highlight_in_one_eye_is_unmatched(self):
+        ref_l, ref_r, dl, dr = self.pair()
+        ref_l = ref_l.clone()
+        ref_l[..., 4:10, 12:20] += 0.5          # a highlight only the left eye sees
+        out = losses.stereo_disagreement_split(ref_l, ref_r, ref_l, ref_r, dl, dr)
+        self.assertGreater(out["unmatched_share"], 0.0)
+        self.assertLess(out["unmatched_share"], 0.5)
+        self.assertGreater(out["unmatched"], 0.05)  # the pair really differs there ...
+        self.assertLess(out["matched"], 1e-3)       # ... and nowhere else
+
+    def test_denoising_error_on_a_diffuse_region_counts_as_matched(self):
+        ref_l, ref_r, dl, dr = self.pair()
+        pred_l = ref_l.clone()
+        pred_l[..., 20:28, 30:40] += 0.3         # an artefact in one eye, reference is fine
+        out = losses.stereo_disagreement_split(pred_l, ref_r, ref_l, ref_r, dl, dr)
+        self.assertEqual(out["unmatched_share"], 0.0)
+        self.assertGreater(out["matched"], 1e-3)
+
+    def test_matched_and_unmatched_recombine_to_the_total(self):
+        ref_l, ref_r, dl, dr = self.pair()
+        ref_l = ref_l.clone()
+        ref_l[..., 4:10, 12:20] += 0.5
+        pred_l, pred_r = ref_l * 1.1, ref_r * 0.9
+        out = losses.stereo_disagreement_split(pred_l, pred_r, ref_l, ref_r, dl, dr)
+        total = losses.stereo_disagreement(pred_l, pred_r, dl, dr).item()
+        s = out["unmatched_share"]
+        self.assertAlmostEqual((1 - s) * out["matched"] + s * out["unmatched"], total, places=5)
 
 
 class LogSpaceTest(unittest.TestCase):

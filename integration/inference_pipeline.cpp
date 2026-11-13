@@ -54,9 +54,18 @@ void NeuralDenoiser::denoise(const std::vector<EyeBuffers>& eyes, int width, int
         torch::Tensor c = torch::from_blob(e.color, {height, width, 3}, opts);
         torch::Tensor n = torch::from_blob(e.normal, {height, width, 3}, opts);
         torch::Tensor a = torch::from_blob(e.albedo, {height, width, 3}, opts);
-        inputs.push_back(torch::cat({c, n, a}, 2).permute({2, 0, 1}));
+        if (fusion()) {
+            if (!e.depth) throw std::runtime_error("fusion model needs EyeBuffers::depth");
+            // Same rule as disparity_px() in core/stereo.h.
+            torch::Tensor z = torch::from_blob(e.depth, {height, width, 1}, opts);
+            torch::Tensor d = torch::where(z > 1e-6f, disparity_scale_ / z, torch::zeros_like(z));
+            inputs.push_back(torch::cat({c, n, a, d}, 2).permute({2, 0, 1}));
+        } else {
+            inputs.push_back(torch::cat({c, n, a}, 2).permute({2, 0, 1}));
+        }
     }
-    torch::Tensor x = torch::stack(inputs, 0).to(device_);  // (N, 9, H, W); no-op when already there
+    if (fusion() && eyes.size() != 2) throw std::runtime_error("fusion model needs exactly {left, right}");
+    torch::Tensor x = torch::stack(inputs, 0).to(device_);  // (N, 9 or 10, H, W); no-op when already there
 
     int64_t ph = (pad_multiple_ - height % pad_multiple_) % pad_multiple_;
     int64_t pw = (pad_multiple_ - width % pad_multiple_) % pad_multiple_;
