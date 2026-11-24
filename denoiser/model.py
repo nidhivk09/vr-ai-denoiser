@@ -13,6 +13,29 @@ eye's disparity in pixels, and the batch must hold stereo pairs ordered
 reprojected into the other eye and given to the U-Net as extra input, with a
 mask of where that reprojection is valid. Both eyes then denoise from the
 same pool of samples wherever a surface is visible in both.
+
+Two stronger ways of sharing information between the eyes build on fusion
+(both need fusion=True, i.e. the disparity channel and paired batches; the
+exported model keeps exactly the same interface):
+
+  exchange=True  multi-scale feature exchange. After every encoder level and
+                 the bottleneck, each eye's feature map is reprojected into the
+                 other eye (disparity scaled to that level) and merged through a
+                 small residual block whose last convolution starts at zero.
+                 The eyes then share what they have inferred, not only their
+                 raw samples, at every scale of the U-Net.
+  blend=True     learned stereo blending of the outputs. A per-pixel weight
+                 alpha in [0, 0.5] moves each eye's prediction (log space)
+                 toward the other eye's reprojected prediction:
+                     y_l <- y_l + alpha_l * mask_l * (warp(y_r) - y_l)
+                 alpha = 0.5 makes both eyes output the average. The network
+                 predicts alpha from its last decoder features, so it can keep
+                 it low where the eyes legitimately differ (highlights,
+                 reflections). A scalar gain that starts at 0 multiplies alpha.
+
+Both start out as the identity: a fusion (or plain) checkpoint loaded with
+load_weights gives exactly the same output as before, and fine-tuning only
+moves away from it where that helps.
 """
 from __future__ import annotations
 
@@ -57,17 +80,25 @@ class UNet(nn.Module):
         nn.init.zeros_(self.head.weight)
         nn.init.zeros_(self.head.bias)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, exchange=None, return_features: bool = False):
+        """exchange: called on each encoder output and on the bottleneck as
+        exchange(level, features), where level is the downsampling level (0 = full
+        resolution). return_features: also return the last decoder features."""
         skips = []
-        for block in self.enc:
+        for i, block in enumerate(self.enc):
             x = block(x)
+            if exchange is not None:
+                x = exchange(i, x)
             skips.append(x)
             x = self.pool(x)
         x = self.bottleneck(x)
+        if exchange is not None:
+            x = exchange(self.levels, x)
         for up, dec in zip(self.up, self.dec):
             x = up(x)
             x = dec(torch.cat([x, skips.pop()], dim=1))
-        return self.head(x)
+        out = self.head(x)
+        return (out, x) if return_features else out
 
 
 def _shift_columns(img: torch.Tensor, shift: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -110,19 +141,110 @@ def cross_eye_features(color: torch.Tensor, disp: torch.Tensor, tol: float = 1.0
     return other.to(dtype), mask.to(dtype)
 
 
+def warp_other_eye(t: torch.Tensor, dl: torch.Tensor, dr: torch.Tensor) -> torch.Tensor:
+    """For t ordered [lefts..., rights...]: the other eye's t reprojected into each
+    eye (no masking), with the same convention as cross_eye_features. The warp
+    runs in float32 and the result has t's type."""
+    tl, tr = torch.chunk(t.float(), 2, dim=0)
+    from_right, _ = _shift_columns(tr, -dl)
+    from_left, _ = _shift_columns(tl, dr)
+    return torch.cat([from_right, from_left], dim=0).to(t.dtype)
+
+
+def stereo_context(disp: torch.Tensor, mask: torch.Tensor, levels: int) -> list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
+    """Per U-Net level 0..levels: (left disparity, right disparity, mask), float32,
+    at that level's resolution and in that level's pixel units. disp and mask are
+    the full-resolution (2B,1,H,W) disparity and cross_eye_features mask; a coarse
+    pixel's mask is the fraction of its full-resolution pixels that are valid."""
+    disp, mask = disp.float(), mask.float()
+    out = []
+    for level in range(levels + 1):
+        k = 2 ** level
+        d = disp if k == 1 else F.avg_pool2d(disp, k) / k
+        m = mask if k == 1 else F.avg_pool2d(mask, k)
+        dl, dr = torch.chunk(d, 2, dim=0)
+        out.append((dl, dr, m))
+    return out
+
+
+class ExchangeBlock(nn.Module):
+    """f + g([f, mask * warp(f_other), mask]); g's last convolution starts at zero."""
+
+    def __init__(self, c: int):
+        super().__init__()
+        self.mix = nn.Conv2d(2 * c + 1, c, 3, padding=1)
+        self.act = nn.LeakyReLU(0.1, inplace=True)
+        self.out = nn.Conv2d(c, c, 1)
+        nn.init.zeros_(self.out.weight)
+        nn.init.zeros_(self.out.bias)
+
+    def forward(self, f: torch.Tensor, dl: torch.Tensor, dr: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        m = mask.to(f.dtype)
+        other = warp_other_eye(f, dl, dr) * m
+        return f + self.out(self.act(self.mix(torch.cat([f, other, m], dim=1))))
+
+
+class CrossEyeExchange(nn.Module):
+    """One ExchangeBlock per U-Net level (encoder levels and the bottleneck)."""
+
+    def __init__(self, base: int, levels: int):
+        super().__init__()
+        self.blocks = nn.ModuleList([ExchangeBlock(base * 2 ** i) for i in range(levels + 1)])
+
+    def forward(self, level: int, f: torch.Tensor, ctx: list) -> torch.Tensor:
+        dl, dr, mask = ctx[level]
+        return self.blocks[level](f, dl, dr, mask)
+
+
+class StereoBlend(nn.Module):
+    """y + alpha * mask * (warp(y_other) - y), alpha = 0.5 * gain * sigmoid(head(features)),
+    gain clamped to [0, 1] and starting at 0 (so the block starts as the identity).
+    Under a consistency loss the gain grows; the head decides where it applies."""
+
+    def __init__(self, c: int):
+        super().__init__()
+        self.head = nn.Conv2d(c, 1, 1)
+        nn.init.zeros_(self.head.weight)
+        nn.init.zeros_(self.head.bias)
+        self.gain = nn.Parameter(torch.zeros(1))
+
+    def alpha(self, features: torch.Tensor) -> torch.Tensor:
+        # Clamped in the forward pass, straight-through in the backward pass: a plain
+        # clamp has zero gradient at the initial gain of 0 and would never move.
+        gain = self.gain.float()
+        gain = gain + (gain.clamp(0.0, 1.0) - gain).detach()
+        return 0.5 * gain * torch.sigmoid(self.head(features).float())
+
+    def forward(self, y: torch.Tensor, features: torch.Tensor, dl: torch.Tensor, dr: torch.Tensor,
+                mask: torch.Tensor) -> torch.Tensor:
+        yf = y.float()
+        other = warp_other_eye(yf, dl, dr)
+        return (yf + self.alpha(features) * mask * (other - yf)).to(y.dtype)
+
+
 FIRST_CONV = "unet.enc.0.body.0.weight"
 
 
 class Denoiser(nn.Module):
     """Raw buffers in, linear HDR color out. Predicts a residual in log space.
-    fusion=True adds the cross-eye input (see the module docstring)."""
+    fusion=True adds the cross-eye input; exchange / blend add the multi-scale
+    feature exchange and the learned output blending (see the module docstring)."""
 
-    def __init__(self, base: int = 32, levels: int = 3, fusion: bool = False):
+    def __init__(self, base: int = 32, levels: int = 3, fusion: bool = False,
+                 exchange: bool = False, blend: bool = False):
         super().__init__()
+        if (exchange or blend) and not fusion:
+            raise ValueError("exchange and blend need fusion=True (the disparity channel and paired batches)")
         self.base = base
         self.levels = levels
         self.fusion = fusion
+        self.exchange = exchange
+        self.blend = blend
         self.unet = UNet(13 if fusion else 9, 3, base, levels)
+        if exchange:
+            self.xchg = CrossEyeExchange(base, levels)
+        if blend:
+            self.stereo_blend = StereoBlend(base)
 
     @property
     def in_channels(self) -> int:
@@ -134,23 +256,55 @@ class Denoiser(nn.Module):
         albedo = x[:, 6:9]
         feats = [color, normal, albedo]
         if self.fusion:
-            feats.extend(cross_eye_features(color, x[:, 9:10]))
-        y = color + self.unet(torch.cat(feats, dim=1))
+            other, mask = cross_eye_features(color, x[:, 9:10])
+            feats.extend((other, mask))
+        unet_in = torch.cat(feats, dim=1)
+        if self.exchange or self.blend:
+            ctx = stereo_context(x[:, 9:10], mask, self.levels)
+            exchange = (lambda level, f: self.xchg(level, f, ctx)) if self.exchange else None
+            residual, last = self.unet(unet_in, exchange, return_features=True)
+            y = color + residual
+            if self.blend:
+                dl, dr, mask = ctx[0]
+                y = self.stereo_blend(y, last, dl, dr, mask)
+        else:
+            y = color + self.unet(unet_in)
         return torch.expm1(torch.clamp(y, min=0.0))
 
     def config(self) -> dict:
-        return {"base": self.base, "levels": self.levels, "fusion": self.fusion}
+        cfg = {"base": self.base, "levels": self.levels, "fusion": self.fusion}
+        if self.exchange:  # (left out otherwise, so older code can still read the checkpoint)
+            cfg["exchange"] = True
+        if self.blend:
+            cfg["blend"] = True
+        return cfg
+
+    def new_parameter_names(self, state: dict) -> set[str]:
+        """Parameters of this model that a checkpoint state does not have (or has
+        with fewer input channels): what fine-tuning from it has to learn first."""
+        names = set()
+        for name, p in self.named_parameters():
+            if name not in state or (name == FIRST_CONV and state[name].shape[1] < p.shape[1]):
+                names.add(name)
+        return names
 
     def load_weights(self, state: dict) -> None:
-        """load_state_dict that also accepts a non-fusion checkpoint for a fusion
-        model: the first convolution gets zero weights for the new input
-        channels, so the model starts out computing exactly what the checkpoint did."""
-        own = self.state_dict()[FIRST_CONV]
+        """load_state_dict that also accepts a checkpoint of a simpler model: a
+        non-fusion checkpoint for a fusion model (the first convolution gets zero
+        weights for the new input channels), and a checkpoint without the
+        exchange / blend modules (they keep their identity initialisation). The
+        model starts out computing exactly what the checkpoint did."""
+        own_state = self.state_dict()
+        own = own_state[FIRST_CONV]
         src = state[FIRST_CONV]
         if src.shape[1] < own.shape[1]:
             padded = torch.zeros_like(own)
             padded[:, :src.shape[1]] = src
             state = {**state, FIRST_CONV: padded}
+        extra = [k for k in own_state if k not in state]
+        if any(not k.startswith(("xchg.", "stereo_blend.")) for k in extra):
+            raise KeyError(f"checkpoint is missing parameters: {[k for k in extra if not k.startswith(('xchg.', 'stereo_blend.'))]}")
+        state = {**state, **{k: own_state[k] for k in extra}}
         self.load_state_dict(state)
 
 

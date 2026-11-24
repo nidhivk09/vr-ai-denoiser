@@ -34,3 +34,7 @@ outputs/
 *.nsys-rep
 *.qdrep
 *.sqlite
+
+# results packed on the GPU machine to send back
+results_exchange*.zip
+run_logs/

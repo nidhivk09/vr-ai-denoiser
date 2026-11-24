@@ -19,6 +19,12 @@ the start. Their runs are named fusion_l<lambda>/, results go to
 lambda_sweep_fusion.csv and fusion_selected.json, and the non-fusion sweep's
 control and selected model are evaluated alongside when they exist.
 
+--exchange / --blend sweep the stronger cross-eye models (multi-scale feature
+exchange, learned output blending; both imply --fusion). Give them their own
+--prefix; the fusion sweep's control and pick are evaluated alongside, e.g.
+    python -m denoiser.sweep_lambda --prefix xchg --exchange --lambdas 0,1,2 \
+        --finetune-epochs 80 --finetune-lr 1e-4
+
 --prefix NAME keeps a variant of the sweep apart from the default one: runs are
 named NAME_l<lambda>/, results go to lambda_sweep_NAME.csv and NAME_selected.json,
 and the default sweep's control and selected model are evaluated alongside. Use
@@ -98,6 +104,8 @@ def main() -> None:
     ap.add_argument("--seeds", default="0,1,2", help="comma-separated training seeds per lambda")
     ap.add_argument("--cons-loss", choices=["error", "output"], default="error")
     ap.add_argument("--fusion", action="store_true", help="sweep cross-eye fusion models (runs fusion_l*)")
+    ap.add_argument("--exchange", action="store_true", help="multi-scale cross-eye feature exchange (implies --fusion)")
+    ap.add_argument("--blend", action="store_true", help="learned stereo output blending (implies --fusion)")
     ap.add_argument("--prefix", default=None,
                     help="run-name prefix for a sweep variant (default: 'sweep', or 'fusion' with --fusion)")
     ap.add_argument("--init", default=str(CHECKPOINT_DIR / "baseline" / "best.pt"),
@@ -114,6 +122,9 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=None)
     args, train_extra = ap.parse_known_args()
     train_extra = [a for a in train_extra if a != "--"]
+    if (args.exchange or args.blend) and not args.prefix:
+        raise SystemExit("--exchange / --blend need their own --prefix (e.g. xchg, blend, xchg_blend)")
+    args.fusion = args.fusion or args.exchange or args.blend
     prefix = args.prefix or ("fusion" if args.fusion else "sweep")
     if not prefix.replace("_", "").isalnum() or prefix.endswith("_l"):
         raise SystemExit("--prefix must be letters, digits and underscores")
@@ -122,6 +133,9 @@ def main() -> None:
     selected_path = CHECKPOINT_DIR / f"{prefix}_selected.json"
     if args.fusion:
         train_extra.append("--fusion")
+    for key in ("exchange", "blend"):
+        if getattr(args, key):
+            train_extra.append(f"--{key}")
 
     lambdas = [float(x) for x in args.lambdas.split(",")]
     seeds = [int(x) for x in args.seeds.split(",")]
@@ -145,6 +159,9 @@ def main() -> None:
             expected = {"mode": "stereo", "lambda_cons": lam, "cons_loss": args.cons_loss, "seed": seed, **schedule}
             if args.fusion:  # (not checked otherwise, so runs made before --fusion existed stay reusable)
                 expected["fusion"] = True
+            for key in ("exchange", "blend"):
+                if getattr(args, key):
+                    expected[key] = True
             done = None if args.retrain else finished_run(CHECKPOINT_DIR / run, expected)
             if done is None:
                 cmd = [sys.executable, "-m", "denoiser.train", "--mode", "stereo", "--lambda-cons", str(lam),
@@ -163,13 +180,17 @@ def main() -> None:
     selected = select_lambda(stats, args.select_l1_tol)
     if selected["lambda"] is not None:
         selected["checkpoint"] = str(CHECKPOINT_DIR / run_name(selected["lambda"], seeds[0], seeds[0], prefix) / "best.pt")
-    selected.update(cons_loss=args.cons_loss, seeds=seeds, from_scratch=args.from_scratch, fusion=args.fusion)
+    selected.update(cons_loss=args.cons_loss, seeds=seeds, from_scratch=args.from_scratch, fusion=args.fusion,
+                    exchange=args.exchange, blend=args.blend)
     selected_path.write_text(json.dumps(selected, indent=2))
     print(f"selected stereo model: lambda = {selected['lambda']} ({selected['reason']}) -> {selected_path}")
 
     if prefix != "sweep":  # the default sweep's control and pick, for a direct comparison
         names = ("nofusion_l0", "nofusion_stereo") if args.fusion else ("default_l0", "default_stereo")
         refs = {names[0]: CHECKPOINT_DIR / "sweep_l0" / "best.pt", names[1]: selected_checkpoint("sweep")}
+        if args.exchange or args.blend:  # and the plain fusion sweep this builds on
+            refs.update({"fusion_l0": CHECKPOINT_DIR / "fusion_l0" / "best.pt",
+                         "fusion_stereo": selected_checkpoint("fusion")})
         for name, ckpt in reversed(refs.items()):
             if ckpt is not None and ckpt.exists():
                 models.insert(0, f"{name}={ckpt}")

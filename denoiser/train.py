@@ -8,6 +8,12 @@
       python -m denoiser.train --mode stereo --lambda-cons 0.5 --init denoiser/checkpoints/baseline/best.pt \
           --epochs 40 --lr 5e-5 --run-name sweep_l0.5
 
+Stronger cross-eye sharing (fusion models only, see denoiser/model.py):
+--exchange adds the multi-scale feature exchange, --blend the learned output
+blending; either implies --fusion. Parameters the --init checkpoint does not
+have start at an identity initialisation and are trained at --new-lr-mult
+times the learning rate, so a short fine-tune is enough for them to move.
+
 --cons-loss picks the consistency term: "error" (default) compares the two
 eyes' errors against ground truth and is zero for a perfect prediction;
 "output" compares the predictions directly (the original form).
@@ -82,6 +88,12 @@ def main() -> None:
                          "prediction), 'output' = predictions compared directly")
     ap.add_argument("--fusion", action="store_true",
                     help="cross-eye fusion: each eye also sees the other eye's reprojected noisy color (stereo mode)")
+    ap.add_argument("--exchange", action="store_true",
+                    help="multi-scale cross-eye feature exchange inside the U-Net (implies --fusion)")
+    ap.add_argument("--blend", action="store_true",
+                    help="learned stereo blending of the two eyes' outputs (implies --fusion)")
+    ap.add_argument("--new-lr-mult", type=float, default=10.0,
+                    help="learning-rate multiplier for parameters the --init checkpoint does not have")
     ap.add_argument("--init", type=Path, default=None,
                     help="start from this checkpoint's weights (fine-tuning); its model config overrides --base/--levels")
     ap.add_argument("--run-name", default=None)
@@ -100,6 +112,8 @@ def main() -> None:
     ap.add_argument("--patience", type=int, default=0, help="early stop after N epochs without improvement (0 = off)")
     args = ap.parse_args()
 
+    if args.exchange or args.blend:
+        args.fusion = True
     if args.mode == "mono":
         args.lambda_cons = 0.0
         if args.fusion:
@@ -127,14 +141,26 @@ def main() -> None:
         init_ckpt = torch.load(args.init, map_location="cpu", weights_only=False)
         args.base, args.levels = init_ckpt["model_config"]["base"], init_ckpt["model_config"]["levels"]
         init_mtime = args.init.stat().st_mtime_ns
-        if init_ckpt["model_config"].get("fusion") and not args.fusion:
-            raise SystemExit(f"{args.init} is a fusion model: pass --fusion")
-    model = Denoiser(args.base, args.levels, args.fusion).to(device)
+        for key, flag in (("fusion", "--fusion"), ("exchange", "--exchange"), ("blend", "--blend")):
+            if init_ckpt["model_config"].get(key) and not getattr(args, key):
+                raise SystemExit(f"{args.init} has {key}: pass {flag}")
+    model = Denoiser(args.base, args.levels, args.fusion, args.exchange, args.blend).to(device)
+    new_params: set[str] = set()
     if args.init is not None:
-        model.load_weights(init_ckpt["model_state"])  # a non-fusion init starts a fusion model as its exact copy
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
+        new_params = model.new_parameter_names(init_ckpt["model_state"])
+        model.load_weights(init_ckpt["model_state"])  # a simpler init starts the model as its exact copy
+    # Parameters the init does not have (the zero-initialised exchange/blend blocks; the new input
+    # channels of the first convolution share their tensor with old ones and stay in the base group)
+    fresh = [p for n, p in model.named_parameters() if n in new_params and n != "unet.enc.0.body.0.weight"]
+    fresh_ids = {id(p) for p in fresh}
+    groups = [{"params": [p for p in model.parameters() if id(p) not in fresh_ids], "lr": args.lr}]
+    max_lrs = [args.lr]
+    if fresh:
+        groups.append({"params": fresh, "lr": args.lr * args.new_lr_mult})
+        max_lrs.append(args.lr * args.new_lr_mult)
+    opt = torch.optim.Adam(groups, lr=args.lr)
     steps_per_epoch = len(train_loader) if args.max_steps_per_epoch <= 0 else min(len(train_loader), args.max_steps_per_epoch)
-    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=args.epochs * steps_per_epoch,
+    sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=max_lrs, total_steps=args.epochs * steps_per_epoch,
                                                 pct_start=0.05)
     use_amp = args.amp and device.type == "cuda"
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
@@ -144,7 +170,10 @@ def main() -> None:
 
     if args.init is not None:
         print(f"initialised from {args.init} (epoch {init_ckpt.get('epoch')}, val_l1 {init_ckpt.get('val_l1')})")
-    print(f"run '{run}' | mode {args.mode}{' + fusion' if args.fusion else ''} | lambda {args.lambda_cons} "
+    extras = "".join(f" + {k}" for k in ("fusion", "exchange", "blend") if getattr(args, k))
+    if fresh:
+        print(f"{sum(p.numel() for p in fresh)} new parameters at {args.new_lr_mult:g}x lr")
+    print(f"run '{run}' | mode {args.mode}{extras} | lambda {args.lambda_cons} "
           f"({args.cons_loss}) | device {device} | "
           f"{count_parameters(model) / 1e6:.2f}M params")
     print(f"train samples {len(train_set)} ({steps_per_epoch} steps/epoch), val stereo patches {len(val_set)}")

@@ -151,6 +151,29 @@ Phase 9 results - copy `benchmarks/results/` first if you want both). In
 `fusion` vs `fusion_l0` the effect of the consistency loss on top. The exported model takes
 10 input channels (the 10th is disparity) and needs `run_pipeline --fusion`; the benchmark
 adds that flag by itself.
+**Stronger cross-eye sharing (experimental, `--exchange`, `--blend`).** Fusion alone shares
+only the raw noisy samples at the input, and the network uses them sparingly (paper, Section
+on fusion). Two additions share more, both on top of `--fusion` and with the same exported
+interface (10 channels, `run_pipeline --fusion`):
+
+- `--exchange`: *multi-scale feature exchange*. After every encoder level and the
+  bottleneck, each eye's features are reprojected into the other eye (disparity scaled to
+  that level, validity mask from the left-right check) and merged by a small residual block.
+- `--blend`: *learned stereo blending*. Each eye's output moves toward the other eye's
+  reprojected output by a per-pixel weight in [0, 0.5] that the network predicts, so it
+  can blend on diffuse surfaces and keep the eyes apart on highlights. A learned version of
+  the stereo blending of Philippi et al.
+
+Both start as the identity (a fusion or plain checkpoint is reproduced exactly) and their
+new parameters train at `--new-lr-mult` (10x) the learning rate. The whole experiment
+(three variants x λ ∈ {0, 1, 2} x 3 seeds, evaluation, FP16 timing in the C++ pipeline,
+Nsight profiles, a summary table and a zip of results) is one command, after phases 6-7 and
+7 `--fusion`:
+
+```bash
+python scripts/run_exchange.py all            # see GPU_TESTING.md for the step-by-step version
+```
+
 Training uses a one-cycle learning-rate schedule, so `--epochs` sets the run length
 (add `--patience N` for early stopping). On an 8 GB GPU, keep `--batch-size 16` (the default); raise
 it on bigger GPUs.
