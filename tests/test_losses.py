@@ -355,7 +355,9 @@ class DisagreementSplitTest(unittest.TestCase):
 
     @staticmethod
     def pair(d: float = 8.0):
-        ref_l, ref_r = ramp(x0=0.0), ramp(x0=d)
+        # scaled into the display range: ramp() exceeds 1 in two of its channels, and the
+        # metric clamps there, which would hide a highlight added on top
+        ref_l, ref_r = 0.3 * ramp(x0=0.0), 0.3 * ramp(x0=d)
         return ref_l, ref_r, const(d), const(d)
 
     def test_consistent_reference_has_no_unmatched_pixels(self):
