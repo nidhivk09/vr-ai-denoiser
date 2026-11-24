@@ -342,7 +342,11 @@ def step_pack(a):
                 "denoiser/checkpoints/*/log.csv", f"{out}/*/*/timing.json",
                 f"{out}/*/*/python_comparison.json", f"{out}/*/fp16/anaglyph.png",
                 f"{out}/*/fp16/*_denoised.png", "run_logs/*.log", "benchmarks/results/eval_split/*.csv",
-                "benchmarks/results/lambda_sweep_*/summary.csv"]
+                "benchmarks/results/lambda_sweep_*/summary.csv",
+                # cross-eye fusion phases 7-9 (GPU_TESTING.md, step 9)
+                "benchmarks/results/eval_fusion/*", "benchmarks/results/eval/*.csv",
+                "benchmarks/results/phase9_fusion/**/*", "outputs/phase8/*.json", "outputs/phase8_fusion/*.json",
+                "outputs/phase8_fusion/*.png"]
     if a.with_checkpoints:
         for p in variant_models(a.variants).values():
             patterns.append(str(p.relative_to(ROOT)))

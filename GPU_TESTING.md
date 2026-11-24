@@ -13,7 +13,7 @@ by hand). It takes a fresh laptop to a single zip file of results to send back.
 ## Rules for Claude Code
 
 1. Work only in the cloned repository. **Do not push, commit, or open pull requests.**
-   The results go back as a zip file (step 10).
+   The results go back as a zip file (step 12).
 2. **Do not edit the source code to make a step pass.** If a step fails, look in
    *Troubleshooting* at the end. If the fix is not there, stop and write down the exact
    command, the full error and what you tried in `run_logs/NOTES.md`. Settings changes
@@ -138,8 +138,7 @@ python scripts/run_phase.py 5 2>&1 | tee run_logs/phase5.log
 python scripts/run_phase.py 6 2>&1 | tee run_logs/phase6.log
 ```
 
-The two reference sweeps are trained by the next step (`--make-missing`) if they are
-missing, with the same λ values and seeds as the new models.
+The single-view sweep and the cross-eye fusion sweep are trained in step 9.
 
 > If a new dataset or baseline is made here, all numbers will differ slightly from the
 > paper's. That is fine: everything in the result zip is compared within the same run.
@@ -185,7 +184,55 @@ nsys --version && ncu --version
 If `ncu` still does not work, carry on: the script then only records Nsight Systems, and
 that is enough. If `nsys` is missing too, the step is skipped; write that in `NOTES.md`.
 
-## Step 9: The full run (several hours)
+## Step 9: Cross-eye fusion, phases 7-9 with `--fusion` (2-5 h)
+
+Cross-eye fusion (each eye also sees the other eye's reprojected noisy samples) has not
+been run on this machine yet. It is the reference for everything in step 10, so run it
+first, in tmux.
+
+**9a. Single-view sweep (only if `denoiser/checkpoints/sweep_selected.json` is missing).**
+This is the control that fusion is compared against (3-8 h with the paper's λ values):
+
+```bash
+python scripts/run_phase.py 7 2>&1 | tee run_logs/phase7.log
+# if time is short: python scripts/run_phase.py 7 --lambdas 0,1,2,5   (write it in NOTES.md)
+```
+
+**9b. Fusion sweep, C++ pipeline and benchmarks.** Look up the GPU's memory bandwidth in
+GB/s on its spec sheet (`nvidia-smi --query-gpu=name --format=csv` gives the model; for
+example RTX 3060 Laptop 336, RTX 3070 Laptop 448, RTX 4060/4070 Laptop 256, RTX 4080 Laptop
+432, RTX 4090 Laptop 576). It only scales a percentage, so use 0 if unsure.
+
+```bash
+python scripts/run_phase.py 7 8 9 --fusion --lambdas 0,1,2 --gpu-bandwidth <GB/s> 2>&1 | tee run_logs/fusion.log
+```
+
+- Phase 7 `--fusion`: λ ∈ {0, 1, 2} × 3 seeds, each fine-tuned from the baseline for 80
+  epochs at lr 1e-4 (runs `fusion_l*`), then all models are evaluated together.
+- Phase 8 `--fusion`: TorchScript export, the C++ pipeline with `run_pipeline --fusion`
+  (it builds the disparity channel on the GPU), and a C++ vs Python check.
+- Phase 9 `--fusion`: frame times and quality of the four configurations with the fusion
+  model as the stereo model, workload divergence, Nsight (if `nsys` is installed, step 8),
+  and the plots.
+
+**Expected:**
+- `benchmarks/results/lambda_sweep_fusion.csv` and `denoiser/checkpoints/fusion_selected.json` exist.
+- `benchmarks/results/eval_fusion/summary.csv` has rows `fusion_l0`, `fusion` and (if 9a ran) `control_l0`.
+- `outputs/phase8_fusion/python_comparison.json` says `"match": true`.
+- `outputs/phase8_fusion/timing.json` exists, and its `denoise_ms` compared with `outputs/phase8/timing.json` is the cost of the cross-eye input.
+
+Phase 9 writes to `benchmarks/results/` directly, so keep a copy before step 10 (the copy goes into the zip):
+
+```bash
+mkdir -p benchmarks/results/phase9_fusion
+for f in frame_time_summary.csv frame_times.csv quality_by_config.csv quality_per_scene.csv \
+         divergence.csv figures nsight; do
+  [ -e benchmarks/results/$f ] && cp -r benchmarks/results/$f benchmarks/results/phase9_fusion/
+done
+ls benchmarks/results/phase9_fusion
+```
+
+## Step 10: Exchange / blending, the full run (several hours)
 
 Inside tmux:
 
@@ -197,7 +244,7 @@ What it does (each step can also be run alone, e.g. `python scripts/run_exchange
 
 | step | what | time (rough, laptop GPU) |
 |---|---|---|
-| check | finds or trains the `sweep_*` / `fusion_*` reference sweeps (λ 0,1,2 × 3 seeds) | 0 or 1-3 h |
+| check | finds the `sweep_*` / `fusion_*` sweeps from step 9 (trains them only if missing) | seconds |
 | train | 3 variants (`xchg`, `blend`, `xchg_blend`) × λ 0,1,2 × 3 seeds, 80 epochs each, from the baseline | 2-6 h |
 | eval | every model on the 4 test scenes at 1/4/8 spp | 5 min |
 | timing | TorchScript export (FP32, FP16), C++ pipeline at 4 spp, C++ vs Python check | 5 min |
@@ -221,18 +268,18 @@ batch 16, they are not retrained, so the comparison is then less clean. Write th
 **Expected:** `benchmarks/results/exchange_summary.md` is printed at the end, and
 `results_exchange.zip` exists.
 
-## Step 10: Optional follow-up experiments for the paper (2-4 h)
+## Step 11: Optional follow-up experiments for the paper (2-4 h)
 
 These are separate pending items: the output-form loss under the controlled protocol, the
 single-view sweep with the fusion budget, and the matched/unmatched disagreement split.
-Run them only if steps 1-9 are done and there is time:
+Run them only if steps 1-10 are done and there is time:
 
 ```bash
 bash scripts/run_followup.sh 2>&1 | tee run_logs/followup.log
 python scripts/run_exchange.py pack          # re-pack so the zip includes them
 ```
 
-## Step 11: Send back
+## Step 12: Send back
 
 1. Fill in `run_logs/NOTES.md`: the GPU, the driver (`nvidia-smi`), any deviations, any
    errors, and anything that looked odd.
@@ -266,7 +313,7 @@ developer account is needed), then open the `.nsys-rep` / `.ncu-rep` files from 
 | CMake: LibTorch not found | The `-DCMAKE_PREFIX_PATH=$(python -c ...)` part ran outside the venv. Activate `.venv` and configure again. |
 | `run_pipeline: error while loading shared libraries: libtorch...` | `export LD_LIBRARY_PATH=$(python -c 'import torch,os;print(os.path.dirname(torch.__file__))')/lib:$LD_LIBRARY_PATH` |
 | `could not find the 'run_pipeline' binary` | Step 4 did not finish, or set `RUN_PIPELINE_BIN=/full/path/to/run_pipeline`. |
-| `CUDA out of memory` during training | `--batch-size 8` (see step 9). |
+| `CUDA out of memory` during training | `--batch-size 8` (see step 10). |
 | `WARNING: C++ and Python outputs differ` | Do not change the code. Record the printed diff values in NOTES.md and continue. |
 | `traced model does not match eager model` during export | Record it in NOTES.md, then rerun that one step (`python scripts/run_exchange.py timing`). If it happens again, stop. |
 | `ncu`: `ERR_NVGPUCTRPERM` | See step 8. |
