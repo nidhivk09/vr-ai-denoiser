@@ -10,6 +10,37 @@ by hand). It takes a fresh laptop to a single zip file of results to send back.
 > (Windows: Settings → System → Power → Screen and sleep → *Never* while plugged in).
 > The full run takes several hours.
 
+> **Already did the full run (steps 0-12) once?** Then only the re-evaluation below is
+> needed. Skip everything else.
+
+## Re-evaluation with the stereo error metric (about 15-30 min, no training)
+
+The first run is finished. This adds one metric (the stereo error against the ground-truth
+pair) by re-evaluating the models that are already trained. It **reuses every finished
+training run**; if the log shows a model *training* (lines like `run 'xchg_l0' | mode ...`
+followed by epochs), stop and record it in `run_logs/NOTES.md`, because nothing should
+need retraining.
+
+In the same repository folder as the first run (the rules below still apply):
+
+```bash
+cd ~/vr-ai-denoiser && source .venv/bin/activate
+git fetch origin && git checkout stereo-exchange && git pull
+python -m unittest tests.test_losses            # Expected: OK
+mkdir -p run_logs
+python scripts/run_exchange.py train eval summarize 2>&1 | tee run_logs/reeval.log
+python scripts/run_exchange.py pack --with-checkpoints
+```
+
+`git pull` may complain about local changes to files under `benchmarks/results/`. Those
+are outputs, not code: run `git stash` first, then pull again.
+
+**Expected:** every training run prints `reusing finished run ...`, and the printed
+`exchange_summary.md` has numbers in the new `stereo error` column. Send back the new
+`results_exchange.zip`. It is larger than before because it also holds the selected models.
+
+---
+
 ## Rules for Claude Code
 
 1. Work only in the cloned repository. **Do not push, commit, or open pull requests.**

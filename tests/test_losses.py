@@ -394,6 +394,36 @@ class DisagreementSplitTest(unittest.TestCase):
         s = out["unmatched_share"]
         self.assertAlmostEqual((1 - s) * out["matched"] + s * out["unmatched"], total, places=5)
 
+    def test_reference_pair_has_zero_stereo_error(self):
+        ref_l, ref_r, dl, dr = self.pair()
+        ref_l = ref_l.clone()
+        ref_l[..., 4:10, 12:20] += 0.5
+        out = losses.stereo_disagreement_split(ref_l, ref_r, ref_l, ref_r, dl, dr)
+        self.assertGreater(out["unmatched"], 0.05)  # the reference pair disagrees ...
+        self.assertLess(out["err"], 1e-6)          # ... but has no error against itself
+        self.assertLess(out["err_unmatched"], 1e-6)
+
+    def test_flattening_a_real_difference_is_an_error(self):
+        """Copying the left eye into the right lowers disagreement below the reference's,
+        and the stereo error catches it where the eyes should differ."""
+        ref_l, ref_r, dl, dr = self.pair()
+        ref_l = ref_l.clone()
+        ref_l[..., 4:10, 12:20] += 0.5          # a highlight only the left eye sees
+        pred_r, _ = losses.warp_left_to_right(ref_l, dr)  # right eye = left eye reprojected
+        flat = losses.stereo_disagreement_split(ref_l, pred_r, ref_l, ref_r, dl, dr)
+        exact = losses.stereo_disagreement_split(ref_l, ref_r, ref_l, ref_r, dl, dr)
+        self.assertLess(flat["unmatched"], exact["unmatched"])  # plain disagreement "improves"
+        self.assertGreater(flat["err_unmatched"], 0.05)          # the error does not
+        self.assertGreater(flat["err"], exact["err"])
+
+    def test_artefact_raises_error_like_disagreement(self):
+        ref_l, ref_r, dl, dr = self.pair()
+        pred_l = ref_l.clone()
+        pred_l[..., 20:28, 30:40] += 0.3
+        out = losses.stereo_disagreement_split(pred_l, ref_r, ref_l, ref_r, dl, dr)
+        self.assertGreater(out["err_matched"], 1e-3)
+        self.assertAlmostEqual(out["err_matched"], out["matched"], places=4)
+
 
 class LogSpaceTest(unittest.TestCase):
     def test_negatives_are_clamped_before_the_log(self):

@@ -8,6 +8,10 @@ All metrics are computed on display-referred images (linear HDR clamped to
   stereo disagreement - mean |left - warp(right)| over mutually visible pixels,
                         also split into pixels where the reference pair agrees
                         (dis_matched) and where it differs (dis_unmatched)
+  stereo error        - mean |(left - warp(right)) - (gt_left - warp(gt_right))|:
+                        the disagreement's error against the reference pair, so
+                        agreeing more than the truth also counts (dis_err, and
+                        dis_err_matched / dis_err_unmatched)
 
 CLI: compare rendered/denoised stereo outputs against a ground-truth render:
     python -m benchmarks.quality_metrics --pred outputs/pipeline --gt dataset/raw/scene_000/gt
@@ -93,6 +97,11 @@ def stereo_metrics(left: torch.Tensor, right: torch.Tensor, gt_left: torch.Tenso
     out["dis_matched"] = split["matched"]
     out["dis_unmatched"] = split["unmatched"]
     out["unmatched_share"] = split["unmatched_share"]
+    # Error of the stereo difference against the reference pair's (0 for the reference;
+    # penalises over-agreement as well as denoising artefacts).
+    out["dis_err"] = split["err"]
+    out["dis_err_matched"] = split["err_matched"]
+    out["dis_err_unmatched"] = split["err_unmatched"]
     if with_lpips:
         a, b = lpips_distance(left, gt_left), lpips_distance(right, gt_right)
         out["lpips"] = None if a is None else 0.5 * (a + b)

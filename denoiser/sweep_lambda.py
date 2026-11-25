@@ -208,7 +208,8 @@ def main() -> None:
             lam, seed = info.get(r["method"], ("", ""))
             out_rows.append({"method": r["method"], "lambda": lam, "seed": seed, "spp": r["spp"],
                              "psnr": r["psnr"], "ssim": r["ssim"], "disagreement": r["disagreement"],
-                             "dis_matched": r.get("dis_matched", ""), "dis_unmatched": r.get("dis_unmatched", "")})
+                             "dis_matched": r.get("dis_matched", ""), "dis_unmatched": r.get("dis_unmatched", ""),
+                             **{k: r.get(k, "") for k in ("dis_err", "dis_err_matched", "dis_err_unmatched")}})
     dest = RESULTS_DIR / f"lambda_sweep{suffix}.csv"
     with open(dest, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=list(out_rows[0]))

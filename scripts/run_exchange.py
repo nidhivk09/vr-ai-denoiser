@@ -270,22 +270,25 @@ def step_summarize(a):
     for spp in sorted(rows_by_spp, key=int):
         ctrl = ref_rows.get(("nofusion_l0", spp)) or ref_rows.get(("default_l0", spp))
         fus0 = ref_rows.get(("fusion_l0", spp))
+        gt = ref_rows.get(("ground_truth", spp))
         lines += [f"## {spp} spp", "",
-                  "| model | PSNR | disagreement | vs control | vs fusion_l0 | matched | unmatched | seeds |",
-                  "|---|---|---|---|---|---|---|---|"]
+                  "| model | PSNR | disagreement | vs control | vs fusion_l0 | matched | unmatched | "
+                  "stereo error | error vs fusion_l0 | unmatched kept | seeds |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|"]
         for name in ("baseline", "nofusion_l0", "nofusion_stereo", "fusion_l0", "fusion_stereo", "ground_truth"):
             r = ref_rows.get((name, spp))
             if r:
                 lines.append(f"| {name} | {float(r['psnr']):.2f} | {1e3 * float(r['disagreement']):.3f} | "
-                             f"{_rel(r, ctrl)} | {_rel(r, fus0)} | {_k(r, 'dis_matched')} | {_k(r, 'dis_unmatched')} | 1 |")
+                             f"{_rel(r, ctrl)} | {_rel(r, fus0)} | {_k(r, 'dis_matched')} | {_k(r, 'dis_unmatched')} | "
+                             f"{_err(r, fus0, gt)} | 1 |")
         for label, rs in sorted(rows_by_spp[spp]):
             p, plo, phi = _mean_ci([r["psnr"] for r in rs])
             d, dlo, dhi = _mean_ci([r["disagreement"] for r in rs])
             mean_row = {"psnr": p, "disagreement": d,
-                        "dis_matched": _avg(rs, "dis_matched"), "dis_unmatched": _avg(rs, "dis_unmatched")}
+                        **{k: _avg(rs, k) for k in ("dis_matched", "dis_unmatched", "dis_err")}}
             lines.append(f"| {label} | {p:.2f} [{plo:.2f}, {phi:.2f}] | {1e3 * d:.3f} [{1e3 * dlo:.3f}, {1e3 * dhi:.3f}] | "
                          f"{_rel(mean_row, ctrl)} | {_rel(mean_row, fus0)} | {_k(mean_row, 'dis_matched')} | "
-                         f"{_k(mean_row, 'dis_unmatched')} | {len(rs)} |")
+                         f"{_k(mean_row, 'dis_unmatched')} | {_err(mean_row, fus0, gt)} | {len(rs)} |")
         lines.append("")
     picks = {v: selected_lambda(run_prefix(v)) for v in a.variants}
     lines += ["## Selected on the validation split", "",
@@ -309,7 +312,13 @@ def step_summarize(a):
               "- The previous best (paper, Table IV): fusion lambda=1, -7.2% disagreement at -0.08 dB (4 spp).",
               "- A clear improvement is a larger disagreement reduction at the same PSNR (inside the seed range), "
               "or the same reduction at a smaller PSNR cost. Check `matched`: that is where disagreement is a "
-              "pure denoising artefact.", ""]
+              "pure denoising artefact.",
+              "- `stereo error`: mean |(L - warp R) - (L_gt - warp R_gt)|, 1e-3. 0 for the ground truth. Unlike "
+              "disagreement it also penalises eyes that agree MORE than the truth (one eye copied into the other). "
+              "This is the consistency number to report; disagreement below the ground truth's is not an improvement.",
+              "- `error vs fusion_l0`: relative change of the stereo error against plain fusion.",
+              "- `unmatched kept`: unmatched disagreement / the ground truth's, i.e. how much of the real "
+              "view-dependent difference (highlights, silhouettes) survives. Well below 100% means it is flattened.", ""]
     SUMMARY.write_text("\n".join(lines))
     print("\n".join(lines))
     print(f"wrote {SUMMARY}")
@@ -323,6 +332,20 @@ def _avg(rs, k):
 def _k(r, key):
     v = r.get(key)
     return "" if v in (None, "") else f"{1e3 * float(v):.3f}"
+
+
+def _err(r, fus0, gt):
+    """stereo error | its change against fusion_l0 | unmatched kept (blank if not measured)."""
+    e = r.get("dis_err")
+    if e in (None, ""):
+        cells = ["", ""]
+    else:
+        f0 = fus0.get("dis_err") if fus0 else None
+        cells = [f"{1e3 * float(e):.3f}",
+                 "" if f0 in (None, "") else f"{100 * (float(e) / float(f0) - 1.0):+.1f}%"]
+    u, g = r.get("dis_unmatched"), gt.get("dis_unmatched") if gt else None
+    cells.append("" if u in (None, "") or g in (None, "") else f"{100 * float(u) / float(g):.0f}%")
+    return " | ".join(cells)
 
 
 def _rel(r, ref):

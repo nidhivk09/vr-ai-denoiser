@@ -125,21 +125,34 @@ def stereo_disagreement_split(left: torch.Tensor, right: torch.Tensor, ref_left:
 
     The reference difference is box-filtered (3x3) before thresholding so its own
     residual noise does not decide the class of single pixels. Returns means over
-    the batch and the share of visible pixels that are unmatched."""
+    the batch and the share of visible pixels that are unmatched.
+
+    Also returns the error of the stereo difference against the reference pair,
+    mean |(left - warp(right)) - (ref_left - warp(ref_right))| per channel, over all
+    visible pixels (err) and per class (err_matched, err_unmatched). Plain
+    disagreement rewards making the eyes agree more than the truth does (e.g. by
+    copying one eye into the other, which erases real view-dependent differences);
+    this error is 0 for the reference pair and grows both for denoising artefacts
+    and for such over-agreement."""
     def display(x):
         return torch.clamp(x, 0.0, 1.0) ** (1.0 / 2.2)
 
     left_mask, _ = visibility_masks(left_disp, right_disp)
     ref_in_l, _ = warp_right_to_left(display(ref_right), left_disp)
-    ref_diff = (display(ref_left) - ref_in_l).abs().mean(dim=1, keepdim=True)
+    ref_signed = display(ref_left) - ref_in_l
+    ref_diff = ref_signed.abs().mean(dim=1, keepdim=True)
     ref_diff = F.avg_pool2d(ref_diff, 3, stride=1, padding=1, count_include_pad=False)
     unmatched = left_mask * (ref_diff > tau).to(left_mask.dtype)
     matched = left_mask - unmatched
     r_in_l, _ = warp_right_to_left(display(right), left_disp)
-    diff = (display(left) - r_in_l).abs().mean(dim=1, keepdim=True)
+    signed = display(left) - r_in_l
+    diff = signed.abs().mean(dim=1, keepdim=True)
+    err = (signed - ref_signed).abs().mean(dim=1, keepdim=True)
 
-    def mean_over(mask):
-        return ((diff * mask).sum(dim=(1, 2, 3)) / mask.sum(dim=(1, 2, 3)).clamp(min=1.0)).mean().item()
+    def mean_over(x, mask):
+        return ((x * mask).sum(dim=(1, 2, 3)) / mask.sum(dim=(1, 2, 3)).clamp(min=1.0)).mean().item()
 
-    return {"matched": mean_over(matched), "unmatched": mean_over(unmatched),
-            "unmatched_share": (unmatched.sum() / left_mask.sum().clamp(min=1.0)).item()}
+    return {"matched": mean_over(diff, matched), "unmatched": mean_over(diff, unmatched),
+            "unmatched_share": (unmatched.sum() / left_mask.sum().clamp(min=1.0)).item(),
+            "err": mean_over(err, left_mask), "err_matched": mean_over(err, matched),
+            "err_unmatched": mean_over(err, unmatched)}
