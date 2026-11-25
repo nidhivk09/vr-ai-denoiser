@@ -13,6 +13,7 @@ with the disparity in pixels as the 10th channel (run_pipeline --fusion).
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 from pathlib import Path
@@ -34,6 +35,9 @@ def main() -> None:
     ap.add_argument("--width", type=int, default=512)
     ap.add_argument("--half", action="store_true", help="export FP16 weights (CUDA only)")
     ap.add_argument("--onnx", action="store_true", help="also write an ONNX file")
+    ap.add_argument("--no-align", action="store_true",
+                    help="keep the trained channel counts (by default convolution inputs are zero-padded to "
+                         "multiples of 8 for FP16 tensor cores; the output is the same)")
     args = ap.parse_args()
 
     device = pick_device(args.device)
@@ -60,8 +64,10 @@ def main() -> None:
         return x
 
     example = sample(2, h, w)
+    # Traced from an aligned copy; checked below against the unaligned eager model.
+    to_trace = model if args.no_align else copy.deepcopy(model).align_channels()
     with torch.no_grad():
-        traced = torch.jit.trace(model, example)
+        traced = torch.jit.trace(to_trace, example)
         traced = torch.jit.freeze(traced.eval())
         # Verify against eager mode, including a different resolution.
         # (a fusion model needs whole stereo pairs, so its batch stays even)
@@ -75,7 +81,7 @@ def main() -> None:
     traced.save(str(out))
     meta = {"checkpoint": str(args.checkpoint), "run": ckpt.get("run"), "mode": ckpt.get("mode"),
             "lambda_cons": ckpt.get("lambda_cons"), "pad_multiple": mult, "half": args.half,
-            "traced_on": str(device), **ckpt["model_config"]}
+            "traced_on": str(device), "aligned_channels": not args.no_align, **ckpt["model_config"]}
     out.with_suffix(".json").write_text(json.dumps(meta, indent=2))
     print(f"saved TorchScript model to {out}")
 

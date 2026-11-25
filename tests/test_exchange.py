@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from denoiser import losses  # noqa: E402
 from denoiser.model import (FIRST_CONV, Denoiser, cross_eye_features, pair_input,  # noqa: E402
-                            stereo_context, warp_other_eye)
+                            level_grids, other_eye_grid, sample_other_eye, stereo_context, warp_other_eye)
 
 H, W = 16, 32
 VARIANTS = [dict(exchange=True), dict(blend=True), dict(exchange=True, blend=True)]
@@ -214,6 +214,66 @@ class ConfigTest(unittest.TestCase):
             traced = torch.jit.trace(model, sample(2, 16, 32))
             x = sample(6, 24, 20)
             self.assertLess((traced(x) - model(x)).abs().max().item(), 1e-5)
+
+
+class InferenceSpeedupTest(unittest.TestCase):
+    """align_channels and exchange_levels (the frame-time work)."""
+
+    @staticmethod
+    def sample(n=2, h=H, w=W):
+        torch.manual_seed(5)
+        x = torch.rand(n, 10, h, w)
+        x[:, 9] *= 6.0
+        return x
+
+    def test_aligned_model_gives_the_same_output(self):
+        x = self.sample()
+        for kw in [dict(fusion=False), dict(fusion=True), *({"fusion": True, **v} for v in VARIANTS)]:
+            model = randomise(Denoiser(8, 2, **kw)).eval()
+            xi = x if model.fusion else x[:, :9]
+            with torch.no_grad():
+                before = model(xi)
+                aligned = model.align_channels()
+                after = aligned(xi)
+            self.assertLess((before - after).abs().max().item(), 1e-6, f"{kw}")
+            for name, p in aligned.named_parameters():
+                if name.endswith("weight") and p.dim() == 4 and p.shape[2] == 3:
+                    self.assertEqual(p.shape[1] % 8, 0, name)
+
+    def test_exchange_only_at_chosen_levels(self):
+        model = Denoiser(8, 2, fusion=True, exchange=True, exchange_levels=[2, 1])
+        blocks = {n.split(".")[2] for n, _ in model.named_parameters() if n.startswith("xchg.")}
+        self.assertEqual(blocks, {"1", "2"})
+        self.assertEqual(model.config()["exchange_levels"], [1, 2])
+        again = Denoiser(**model.config())
+        again.load_state_dict(model.state_dict())  # same parameter names as a full exchange model's
+        full = Denoiser(8, 2, fusion=True, exchange=True).state_dict()
+        self.assertTrue(set(model.state_dict()) <= set(full))
+        with self.assertRaises(ValueError):
+            Denoiser(8, 2, fusion=True, exchange=True, exchange_levels=[3])
+        with self.assertRaises(ValueError):
+            Denoiser(8, 2, fusion=True, exchange_levels=[1])
+
+    def test_level_subset_starts_as_the_identity(self):
+        fusion = randomise(Denoiser(8, 2, fusion=True)).eval()
+        model = Denoiser(8, 2, fusion=True, exchange=True, exchange_levels=[2]).eval()
+        model.load_weights(fusion.state_dict())
+        x = self.sample()
+        with torch.no_grad():
+            self.assertLess((model(x) - fusion(x)).abs().max().item(), 1e-6)
+
+    def test_level_grids_warp_like_the_context(self):
+        """The once-per-level grids reproject exactly as warp_other_eye with stereo_context."""
+        torch.manual_seed(6)
+        disp = torch.rand(2, 1, H, W) * 6.0
+        _, mask = cross_eye_features(torch.rand(2, 3, H, W), disp)
+        g0, _ = other_eye_grid(disp)
+        grids = level_grids(disp, mask, g0, [0, 1, 2])
+        for level, (dl, dr, m) in enumerate(stereo_context(disp, mask, 2)):
+            f = torch.rand(2, 4, H >> level, W >> level)
+            grid, gm = grids[level]
+            self.assertEqual((sample_other_eye(f, grid) - warp_other_eye(f, dl, dr)).abs().max().item(), 0.0)
+            self.assertEqual((gm - m).abs().max().item(), 0.0)
 
 
 if __name__ == "__main__":

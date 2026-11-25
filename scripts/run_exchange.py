@@ -7,6 +7,8 @@ comparable with fusion_l<lambda> and with the single-view control sweep_l0.
   xchg        fusion + multi-scale cross-eye feature exchange      (--exchange)
   blend       fusion + learned stereo blending of the outputs      (--blend)
   xchg_blend  both
+  xchg123     exchange at U-Net levels 1-3 only (not at full resolution)   (--exchange-levels 1,2,3)
+  xchg23      exchange at levels 2-3 only                                  (--exchange-levels 2,3)
 
     python scripts/run_exchange.py all                 # everything below, in order
     python scripts/run_exchange.py check               # prerequisites only
@@ -20,6 +22,9 @@ Steps:
   eval       all models together on the test scenes -> benchmarks/results/eval_exchange/
   timing     TorchScript export, C++ pipeline per model (FP16) and C++ vs Python check
              -> benchmarks/results/exchange_timing.csv, outputs/exchange/<model>/
+             (convolution inputs aligned to multiples of 8 at export: same output, faster FP16)
+  bench      Python FP16 micro-benchmark: alignment and exchange-level subsets, CUDA kernel table
+             -> benchmarks/results/exchange_bench.csv, exchange_bench_kernels.txt
   nsight     Nsight Systems (+ Nsight Compute if installed) of the pipeline per model
              -> benchmarks/results/nsight_exchange/ (skipped if nsys is not installed)
   summarize  the tables to read first -> benchmarks/results/exchange_summary.md
@@ -50,10 +55,12 @@ from common.paths import CHECKPOINT_DIR, RAW_DIR, RESULTS_DIR, find_pipeline  # 
 
 PY = sys.executable
 OUT = ROOT / "outputs" / "exchange"
-VARIANTS = {"xchg": ["--exchange"], "blend": ["--blend"], "xchg_blend": ["--exchange", "--blend"]}
+VARIANTS = {"xchg": ["--exchange"], "blend": ["--blend"], "xchg_blend": ["--exchange", "--blend"],
+            # cheaper exchange for the 90 FPS budget: only at the coarser U-Net levels
+            "xchg123": ["--exchange-levels", "1,2,3"], "xchg23": ["--exchange-levels", "2,3"]}
 # Set in main(). --quick writes everything under quick_* names, so a smoke test
 # can never be mistaken for (or reused as) a real run.
-EVAL_DIR = TIMING_CSV = NSIGHT_DIR = SUMMARY = None
+EVAL_DIR = TIMING_CSV = BENCH_CSV = NSIGHT_DIR = SUMMARY = None
 TAG = ""
 
 
@@ -193,6 +200,11 @@ def step_timing(a):
     print(f"wrote {TIMING_CSV}")
 
 
+def step_bench(a):
+    """Python FP16 micro-benchmark: what alignment and fewer exchange levels save (no training)."""
+    sh(PY, "-m", "benchmarks.bench_exchange", "--out", BENCH_CSV, *(["--iters", 30, "--warmup", 5] if a.quick else []))
+
+
 def step_nsight(a):
     nsys = shutil.which("nsys")
     if nsys is None:
@@ -304,6 +316,16 @@ def step_summarize(a):
                              f"{float(r['total_ms']):.2f} | {float(r['total_p95_ms']):.2f} | "
                              f"{'met' if r['budget_met'] == 'True' else 'MISSED'} |")
         lines.append("")
+    if BENCH_CSV is not None and BENCH_CSV.exists():
+        lines += ["## Denoiser alone (Python, traced FP16, random weights, both eyes)", "",
+                  "Aligned = convolution inputs zero-padded to multiples of 8 (same output; the C++ timing above "
+                  "uses it). Levels = exchange only there (needs retraining).", "",
+                  "| model | channels | ops | median ms | p95 ms |", "|---|---|---|---|---|"]
+        with open(BENCH_CSV) as f:
+            for r in csv.DictReader(f):
+                lines.append(f"| {r['model']} | {'aligned' if r['aligned'] == 'True' else 'as trained'} | {r['ops']} | "
+                             f"{float(r['median_ms']):.3f} | {float(r['p95_ms']):.3f} |")
+        lines.append("")
     lines += ["## How to read this", "",
               "- `vs control`: change in PSNR (dB) and relative change in disagreement against the single-view "
               "control sweep_l0 (same baseline, fine-tuned without consistency term).",
@@ -396,7 +418,8 @@ def environment() -> str:
     return "\n".join(out)
 
 
-STEPS = {"check": step_check, "train": step_train, "eval": step_eval, "timing": step_timing, "nsight": step_nsight,
+STEPS = {"check": step_check, "train": step_train, "eval": step_eval, "timing": step_timing, "bench": step_bench,
+         "nsight": step_nsight,
          "summarize": step_summarize, "pack": step_pack}
 
 
@@ -413,11 +436,12 @@ def main() -> None:
     ap.add_argument("--make-missing", action="store_true", help="train missing reference sweeps (sweep_*, fusion_*)")
     ap.add_argument("--with-checkpoints", action="store_true", help="pack: include the selected new models' best.pt")
     a = ap.parse_args()
-    global EVAL_DIR, TIMING_CSV, NSIGHT_DIR, SUMMARY, TAG, OUT
+    global EVAL_DIR, TIMING_CSV, BENCH_CSV, NSIGHT_DIR, SUMMARY, TAG, OUT
     TAG = "quick_" if a.quick else ""
     sfx = "_quick" if a.quick else ""
     EVAL_DIR = RESULTS_DIR / f"eval_exchange{sfx}"
     TIMING_CSV = RESULTS_DIR / f"exchange_timing{sfx}.csv"
+    BENCH_CSV = RESULTS_DIR / f"exchange_bench{sfx}.csv"
     NSIGHT_DIR = RESULTS_DIR / f"nsight_exchange{sfx}"
     SUMMARY = RESULTS_DIR / f"exchange_summary{sfx}.md"
     OUT = ROOT / "outputs" / f"exchange{sfx}"

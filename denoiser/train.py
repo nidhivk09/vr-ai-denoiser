@@ -90,6 +90,9 @@ def main() -> None:
                     help="cross-eye fusion: each eye also sees the other eye's reprojected noisy color (stereo mode)")
     ap.add_argument("--exchange", action="store_true",
                     help="multi-scale cross-eye feature exchange inside the U-Net (implies --fusion)")
+    ap.add_argument("--exchange-levels", default=None,
+                    help="comma-separated U-Net levels that exchange (0 = full resolution, --levels = bottleneck); "
+                         "default all. Fewer levels is cheaper at inference")
     ap.add_argument("--blend", action="store_true",
                     help="learned stereo blending of the two eyes' outputs (implies --fusion)")
     ap.add_argument("--new-lr-mult", type=float, default=10.0,
@@ -112,6 +115,8 @@ def main() -> None:
     ap.add_argument("--patience", type=int, default=0, help="early stop after N epochs without improvement (0 = off)")
     args = ap.parse_args()
 
+    if args.exchange_levels is not None:
+        args.exchange = True
     if args.exchange or args.blend:
         args.fusion = True
     if args.mode == "mono":
@@ -144,7 +149,8 @@ def main() -> None:
         for key, flag in (("fusion", "--fusion"), ("exchange", "--exchange"), ("blend", "--blend")):
             if init_ckpt["model_config"].get(key) and not getattr(args, key):
                 raise SystemExit(f"{args.init} has {key}: pass {flag}")
-    model = Denoiser(args.base, args.levels, args.fusion, args.exchange, args.blend).to(device)
+    exchange_levels = None if args.exchange_levels is None else [int(v) for v in args.exchange_levels.split(",")]
+    model = Denoiser(args.base, args.levels, args.fusion, args.exchange, args.blend, exchange_levels).to(device)
     new_params: set[str] = set()
     if args.init is not None:
         new_params = model.new_parameter_names(init_ckpt["model_state"])

@@ -106,6 +106,8 @@ def main() -> None:
     ap.add_argument("--fusion", action="store_true", help="sweep cross-eye fusion models (runs fusion_l*)")
     ap.add_argument("--exchange", action="store_true", help="multi-scale cross-eye feature exchange (implies --fusion)")
     ap.add_argument("--blend", action="store_true", help="learned stereo output blending (implies --fusion)")
+    ap.add_argument("--exchange-levels", default=None,
+                    help="U-Net levels that exchange, e.g. 2,3 (implies --exchange; default all)")
     ap.add_argument("--prefix", default=None,
                     help="run-name prefix for a sweep variant (default: 'sweep', or 'fusion' with --fusion)")
     ap.add_argument("--init", default=str(CHECKPOINT_DIR / "baseline" / "best.pt"),
@@ -122,6 +124,8 @@ def main() -> None:
     ap.add_argument("--out", type=Path, default=None)
     args, train_extra = ap.parse_known_args()
     train_extra = [a for a in train_extra if a != "--"]
+    if args.exchange_levels is not None:
+        args.exchange = True
     if (args.exchange or args.blend) and not args.prefix:
         raise SystemExit("--exchange / --blend need their own --prefix (e.g. xchg, blend, xchg_blend)")
     args.fusion = args.fusion or args.exchange or args.blend
@@ -136,6 +140,8 @@ def main() -> None:
     for key in ("exchange", "blend"):
         if getattr(args, key):
             train_extra.append(f"--{key}")
+    if args.exchange_levels is not None:
+        train_extra += ["--exchange-levels", args.exchange_levels]
 
     lambdas = [float(x) for x in args.lambdas.split(",")]
     seeds = [int(x) for x in args.seeds.split(",")]
@@ -162,6 +168,8 @@ def main() -> None:
             for key in ("exchange", "blend"):
                 if getattr(args, key):
                     expected[key] = True
+            if args.exchange_levels is not None:  # (not checked otherwise: runs from before it stay reusable)
+                expected["exchange_levels"] = args.exchange_levels
             done = None if args.retrain else finished_run(CHECKPOINT_DIR / run, expected)
             if done is None:
                 cmd = [sys.executable, "-m", "denoiser.train", "--mode", "stereo", "--lambda-cons", str(lam),

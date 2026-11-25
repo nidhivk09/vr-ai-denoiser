@@ -10,34 +10,50 @@ by hand). It takes a fresh laptop to a single zip file of results to send back.
 > (Windows: Settings → System → Power → Screen and sleep → *Never* while plugged in).
 > The full run takes several hours.
 
-> **Already did the full run (steps 0-12) once?** Then only the re-evaluation below is
-> needed. Skip everything else.
+> **Already did the full run (steps 0-12) once?** Then only the *Final run* below is
+> needed. Skip steps 0-12.
 
-## Re-evaluation with the stereo error metric (about 15-30 min, no training)
+## Final run (about 3 h, mostly unattended)
 
-The first run is finished. This adds one metric (the stereo error against the ground-truth
-pair) by re-evaluating the models that are already trained. It **reuses every finished
-training run**; if the log shows a model *training* (lines like `run 'xchg_l0' | mode ...`
-followed by epochs), stop and record it in `run_logs/NOTES.md`, because nothing should
-need retraining.
+The first run is finished. This last one, in the same repository folder as before:
 
-In the same repository folder as the first run (the rules below still apply):
+1. **Re-evaluates** the trained models with a new metric (stereo error against the
+   ground-truth pair). Finished training runs are reused, not retrained.
+2. **Trains two cheaper exchange variants** (`xchg123`, `xchg23`: exchange only at the
+   coarser U-Net levels), 9 short runs each, because `xchg` missed the 90 FPS budget.
+3. **Re-times** every model in the C++ pipeline. The export now pads convolution inputs to
+   multiples of 8 channels (the output is the same), so the timing changes.
+4. **Benchmarks** the denoiser variants in Python with a CUDA kernel table.
+
+The rules below still apply (no pushing, no source edits, log everything).
 
 ```bash
 cd ~/vr-ai-denoiser && source .venv/bin/activate
+git stash                      # only if git reports local changes (they are result files)
 git fetch origin && git checkout stereo-exchange && git pull
-python -m unittest tests.test_losses            # Expected: OK
+for f in tests/test_*.py; do python -m unittest tests.$(basename $f .py) 2>&1 | tail -1; done   # Expected: OK x4
 mkdir -p run_logs
-python scripts/run_exchange.py train eval summarize 2>&1 | tee run_logs/reeval.log
+tmux new -s final              # reattach later with: tmux attach -t final
+python scripts/run_exchange.py train eval timing bench summarize 2>&1 | tee run_logs/final.log
 python scripts/run_exchange.py pack --with-checkpoints
 ```
 
-`git pull` may complain about local changes to files under `benchmarks/results/`. Those
-are outputs, not code: run `git stash` first, then pull again.
+**Expected:**
+- For `xchg`, `blend` and `xchg_blend`, every run prints `reusing finished run ...`. Only
+  `xchg123_*` and `xchg23_*` runs train (lines like `run 'xchg23_l0' | ... + exchange`).
+  If an `xchg_l*`, `blend_l*` or `xchg_blend_l*` run starts training, stop and record it
+  in `run_logs/NOTES.md`.
+- The timing step prints `traced vs eager max abs diff` values near 0 for every model and
+  no `C++ and Python outputs differ` warning.
+- The printed `exchange_summary.md` has numbers in the `stereo error` column, rows for
+  `xchg123` and `xchg23`, the frame-time table (now 7 models) and the
+  *Denoiser alone* table.
+- `results_exchange.zip` exists (a few hundred MB; it includes the trained models).
 
-**Expected:** every training run prints `reusing finished run ...`, and the printed
-`exchange_summary.md` has numbers in the new `stereo error` column. Send back the new
-`results_exchange.zip`. It is larger than before because it also holds the selected models.
+The `nsight` step is not needed this time.
+
+Send back `results_exchange.zip`, plus `run_logs/NOTES.md` if anything went wrong (the
+zip includes `run_logs/` anyway).
 
 ---
 

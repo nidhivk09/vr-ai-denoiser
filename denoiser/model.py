@@ -101,11 +101,16 @@ class UNet(nn.Module):
         return (out, x) if return_features else out
 
 
-def _shift_columns(img: torch.Tensor, shift: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Samples img at (x + shift(x), y), bilinear. Same convention as
+def other_eye_grid(disp: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    """disp: (2B,1,h,w) float32, ordered [lefts..., rights...], in pixels of this
+    resolution. Returns the grid_sample grid with which each eye reads the other
+    eye (the left eye at x - d_left, the right eye at x + d_right) from a batch
+    whose halves are swapped (see swap_eyes), and the in-bounds mask. Built once
+    per resolution and shared by every warp at it. Same convention as
     losses._horizontal_warp, but sizes are taken from tensors rather than Python
-    ints so a traced module keeps working at other resolutions and batch sizes.
-    img: (N,C,H,W) float32; shift: (N,1,H,W) float32 pixels. Returns (warped, in_bounds)."""
+    ints so a traced module keeps working at other resolutions and batch sizes."""
+    dl, dr = torch.chunk(disp, 2, dim=0)
+    shift = torch.cat([-dl, dr], dim=0)
     ones = torch.ones_like(shift)
     xs = ones.cumsum(dim=3) - 1.0
     ys = ones.cumsum(dim=2) - 1.0
@@ -113,42 +118,51 @@ def _shift_columns(img: torch.Tensor, shift: torch.Tensor) -> tuple[torch.Tensor
     h = ones.sum(dim=2, keepdim=True)
     src_x = xs + shift
     grid = torch.cat([(src_x + 0.5) / w * 2.0 - 1.0, (ys + 0.5) / h * 2.0 - 1.0], dim=1).permute(0, 2, 3, 1)
-    warped = F.grid_sample(img, grid, mode="bilinear", padding_mode="border", align_corners=False)
-    in_bounds = ((src_x >= 0.0) & (src_x <= w - 1.0)).to(img.dtype)
-    return warped, in_bounds
+    in_bounds = ((src_x >= 0.0) & (src_x <= w - 1.0)).to(disp.dtype)
+    return grid, in_bounds
 
 
-def cross_eye_features(color: torch.Tensor, disp: torch.Tensor, tol: float = 1.0) -> tuple[torch.Tensor, torch.Tensor]:
+def swap_eyes(t: torch.Tensor) -> torch.Tensor:
+    """[lefts..., rights...] -> [rights..., lefts...]."""
+    a, b = torch.chunk(t, 2, dim=0)
+    return torch.cat([b, a], dim=0)
+
+
+def sample_other_eye(t: torch.Tensor, grid: torch.Tensor) -> torch.Tensor:
+    """The other eye's t reprojected into each eye with a grid from other_eye_grid
+    (no masking). Samples in float32 (the grid's type) and returns t's type."""
+    out = F.grid_sample(swap_eyes(t).float(), grid, mode="bilinear", padding_mode="border", align_corners=False)
+    return out.to(t.dtype)
+
+
+def cross_eye_features(color: torch.Tensor, disp: torch.Tensor, tol: float = 1.0,
+                       grid: tuple[torch.Tensor, torch.Tensor] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
     """For a batch ordered [left eyes..., right eyes...]: the other eye's color
     reprojected into each eye, (2B,3,H,W), and a (2B,1,H,W) mask that is 1 where
     that pixel is really the same surface point (inside the other image and
     passing the left-right disparity check) and 0 elsewhere. The reprojected
-    color is zeroed where the mask is 0.
+    color is zeroed where the mask is 0. grid: other_eye_grid(disp), if already
+    built.
 
     Runs in float32 whatever the input type: half precision cannot hold pixel
     coordinates of a 512-wide image to better than half a pixel."""
     dtype = color.dtype
-    cl, cr = torch.chunk(color.float(), 2, dim=0)
-    dl, dr = torch.chunk(disp.float(), 2, dim=0)
+    d = disp.float()
+    grid_, in_bounds = other_eye_grid(d) if grid is None else grid
     # x_right = x_left - d: the left eye looks up the right image at x - d_left,
-    # the right eye looks up the left image at x + d_right.
-    from_right, inb_l = _shift_columns(torch.cat([cr, dr], dim=1), -dl)
-    from_left, inb_r = _shift_columns(torch.cat([cl, dl], dim=1), dr)
-    mask_l = inb_l * ((from_right[:, 3:4] - dl).abs() < tol).to(inb_l.dtype)
-    mask_r = inb_r * ((from_left[:, 3:4] - dr).abs() < tol).to(inb_r.dtype)
-    other = torch.cat([from_right[:, 0:3] * mask_l, from_left[:, 0:3] * mask_r], dim=0)
-    mask = torch.cat([mask_l, mask_r], dim=0)
-    return other.to(dtype), mask.to(dtype)
+    # the right eye looks up the left image at x + d_right. Both eyes in one warp;
+    # a pixel is valid if the other eye's disparity there agrees with its own.
+    warped = sample_other_eye(torch.cat([color.float(), d], dim=1), grid_)
+    mask = in_bounds * ((warped[:, 3:4] - d).abs() < tol).to(in_bounds.dtype)
+    return (warped[:, 0:3] * mask).to(dtype), mask.to(dtype)
 
 
 def warp_other_eye(t: torch.Tensor, dl: torch.Tensor, dr: torch.Tensor) -> torch.Tensor:
     """For t ordered [lefts..., rights...]: the other eye's t reprojected into each
     eye (no masking), with the same convention as cross_eye_features. The warp
     runs in float32 and the result has t's type."""
-    tl, tr = torch.chunk(t.float(), 2, dim=0)
-    from_right, _ = _shift_columns(tr, -dl)
-    from_left, _ = _shift_columns(tl, dr)
-    return torch.cat([from_right, from_left], dim=0).to(t.dtype)
+    grid, _ = other_eye_grid(torch.cat([dl, dr], dim=0).float())
+    return sample_other_eye(t, grid)
 
 
 def stereo_context(disp: torch.Tensor, mask: torch.Tensor, levels: int) -> list[tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
@@ -167,6 +181,44 @@ def stereo_context(disp: torch.Tensor, mask: torch.Tensor, levels: int) -> list[
     return out
 
 
+def level_grids(disp: torch.Tensor, mask: torch.Tensor, grid0: torch.Tensor, levels) -> dict:
+    """{level: (grid, mask)} for the given levels, float32: what stereo_context
+    gives, with each level's warp grid built once. grid0 is level 0's grid (the one
+    cross_eye_features used)."""
+    disp, mask = disp.float(), mask.float()
+    out = {}
+    for level in levels:
+        if level == 0:
+            out[0] = (grid0, mask)
+            continue
+        k = 2 ** level
+        out[level] = (other_eye_grid(F.avg_pool2d(disp, k) / k)[0], F.avg_pool2d(mask, k))
+    return out
+
+
+def _pad_conv_input(conv: nn.Conv2d, multiple: int) -> tuple[nn.Conv2d, int]:
+    """A copy of conv taking extra all-zero input channels up to a multiple of
+    `multiple` (zero weights there, so the output is unchanged), and how many were
+    added. FP16 convolutions only get the fast tensor-core kernels when the channel
+    counts are multiples of 8."""
+    pad = (-conv.in_channels) % multiple
+    if pad == 0:
+        return conv, 0
+    w = conv.weight
+    new = nn.Conv2d(conv.in_channels + pad, conv.out_channels, conv.kernel_size, conv.stride, conv.padding,
+                    bias=conv.bias is not None).to(device=w.device, dtype=w.dtype)
+    with torch.no_grad():
+        new.weight.zero_()
+        new.weight[:, :conv.in_channels] = w
+        if conv.bias is not None:
+            new.bias.copy_(conv.bias)
+    return new, pad
+
+
+def _pad_channels(x: torch.Tensor, pad: int) -> torch.Tensor:
+    return F.pad(x, (0, 0, 0, 0, 0, pad)) if pad else x
+
+
 class ExchangeBlock(nn.Module):
     """f + g([f, mask * warp(f_other), mask]); g's last convolution starts at zero."""
 
@@ -177,23 +229,33 @@ class ExchangeBlock(nn.Module):
         self.out = nn.Conv2d(c, c, 1)
         nn.init.zeros_(self.out.weight)
         nn.init.zeros_(self.out.bias)
+        self.pad_in = 0  # zero channels appended to mix's input (Denoiser.align_channels)
 
-    def forward(self, f: torch.Tensor, dl: torch.Tensor, dr: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, f: torch.Tensor, grid: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         m = mask.to(f.dtype)
-        other = warp_other_eye(f, dl, dr) * m
-        return f + self.out(self.act(self.mix(torch.cat([f, other, m], dim=1))))
+        other = sample_other_eye(f, grid) * m
+        z = _pad_channels(torch.cat([f, other, m], dim=1), self.pad_in)
+        return f + self.out(self.act(self.mix(z)))
 
 
 class CrossEyeExchange(nn.Module):
-    """One ExchangeBlock per U-Net level (encoder levels and the bottleneck)."""
+    """One ExchangeBlock per exchanging U-Net level (encoder levels and the
+    bottleneck; all of them by default). Keyed by level, so the parameter names
+    are the same as with a block at every level."""
 
-    def __init__(self, base: int, levels: int):
+    def __init__(self, base: int, levels: int, at=None):
         super().__init__()
-        self.blocks = nn.ModuleList([ExchangeBlock(base * 2 ** i) for i in range(levels + 1)])
+        at = range(levels + 1) if at is None else at
+        self.at = tuple(sorted(int(level) for level in at))
+        if not self.at or min(self.at) < 0 or max(self.at) > levels:
+            raise ValueError(f"exchange levels must be in 0..{levels}, got {at}")
+        self.blocks = nn.ModuleDict({str(level): ExchangeBlock(base * 2 ** level) for level in self.at})
 
-    def forward(self, level: int, f: torch.Tensor, ctx: list) -> torch.Tensor:
-        dl, dr, mask = ctx[level]
-        return self.blocks[level](f, dl, dr, mask)
+    def forward(self, level: int, f: torch.Tensor, ctx: dict) -> torch.Tensor:
+        if level not in self.at:
+            return f
+        grid, mask = ctx[level]
+        return self.blocks[str(level)](f, grid, mask)
 
 
 class StereoBlend(nn.Module):
@@ -215,10 +277,9 @@ class StereoBlend(nn.Module):
         gain = gain + (gain.clamp(0.0, 1.0) - gain).detach()
         return 0.5 * gain * torch.sigmoid(self.head(features).float())
 
-    def forward(self, y: torch.Tensor, features: torch.Tensor, dl: torch.Tensor, dr: torch.Tensor,
-                mask: torch.Tensor) -> torch.Tensor:
+    def forward(self, y: torch.Tensor, features: torch.Tensor, grid: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         yf = y.float()
-        other = warp_other_eye(yf, dl, dr)
+        other = sample_other_eye(yf, grid)
         return (yf + self.alpha(features) * mask * (other - yf)).to(y.dtype)
 
 
@@ -231,7 +292,7 @@ class Denoiser(nn.Module):
     feature exchange and the learned output blending (see the module docstring)."""
 
     def __init__(self, base: int = 32, levels: int = 3, fusion: bool = False,
-                 exchange: bool = False, blend: bool = False):
+                 exchange: bool = False, blend: bool = False, exchange_levels=None):
         super().__init__()
         if (exchange or blend) and not fusion:
             raise ValueError("exchange and blend need fusion=True (the disparity channel and paired batches)")
@@ -240,9 +301,13 @@ class Denoiser(nn.Module):
         self.fusion = fusion
         self.exchange = exchange
         self.blend = blend
+        if exchange_levels is not None and not exchange:
+            raise ValueError("exchange_levels needs exchange=True")
+        self.exchange_levels = None if exchange_levels is None else sorted(int(v) for v in exchange_levels)
         self.unet = UNet(13 if fusion else 9, 3, base, levels)
+        self.in_pad = 0  # zero channels appended to the U-Net input (align_channels)
         if exchange:
-            self.xchg = CrossEyeExchange(base, levels)
+            self.xchg = CrossEyeExchange(base, levels, self.exchange_levels)
         if blend:
             self.stereo_blend = StereoBlend(base)
 
@@ -256,25 +321,46 @@ class Denoiser(nn.Module):
         albedo = x[:, 6:9]
         feats = [color, normal, albedo]
         if self.fusion:
-            other, mask = cross_eye_features(color, x[:, 9:10])
+            disp = x[:, 9:10].float()
+            grid0 = other_eye_grid(disp)
+            other, mask = cross_eye_features(color, disp, grid=grid0)
             feats.extend((other, mask))
-        unet_in = torch.cat(feats, dim=1)
+        unet_in = _pad_channels(torch.cat(feats, dim=1), self.in_pad)
         if self.exchange or self.blend:
-            ctx = stereo_context(x[:, 9:10], mask, self.levels)
+            used = set(self.xchg.at) if self.exchange else set()
+            if self.blend:
+                used.add(0)
+            ctx = level_grids(disp, mask, grid0[0], sorted(used))
             exchange = (lambda level, f: self.xchg(level, f, ctx)) if self.exchange else None
             residual, last = self.unet(unet_in, exchange, return_features=True)
             y = color + residual
             if self.blend:
-                dl, dr, mask = ctx[0]
-                y = self.stereo_blend(y, last, dl, dr, mask)
+                grid, m0 = ctx[0]
+                y = self.stereo_blend(y, last, grid, m0)
         else:
             y = color + self.unet(unet_in)
         return torch.expm1(torch.clamp(y, min=0.0))
+
+    def align_channels(self, multiple: int = 8) -> "Denoiser":
+        """For inference only (export, timing): zero-pads the inputs of the
+        convolutions whose input channel count is not a multiple of `multiple` (the
+        first convolution, 9 or 13 channels, and each exchange block's 2c+1) with
+        zero-weight channels. The output is exactly the same; FP16 convolutions on
+        NVIDIA GPUs only get tensor-core kernels with aligned channel counts. The
+        state dict changes shape, so do not save or train the aligned model."""
+        enc0 = self.unet.enc[0].body
+        enc0[0], self.in_pad = _pad_conv_input(enc0[0], multiple)
+        if self.exchange:
+            for block in self.xchg.blocks.values():
+                block.mix, block.pad_in = _pad_conv_input(block.mix, multiple)
+        return self
 
     def config(self) -> dict:
         cfg = {"base": self.base, "levels": self.levels, "fusion": self.fusion}
         if self.exchange:  # (left out otherwise, so older code can still read the checkpoint)
             cfg["exchange"] = True
+            if self.exchange_levels is not None:
+                cfg["exchange_levels"] = list(self.exchange_levels)
         if self.blend:
             cfg["blend"] = True
         return cfg
